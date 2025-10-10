@@ -1,0 +1,47 @@
+import express from 'express';
+import {
+  getDashboardStats,
+  getVerificationRequests,
+  assignVerification,
+  approveVerification,
+  rejectVerification,
+  requestAdditionalInfo,
+  getSystemAnalytics,
+  getEscrowAccount,
+  updateSystemSettings,
+  getRecentActivities
+} from '../controllers/adminController.js';
+import { protect, authorize, hasPermission } from '../middleware/auth.js';
+import { validateObjectId } from '../middleware/validation.js';
+
+const router = express.Router();
+
+// All routes require admin access
+router.use(protect);
+router.use(authorize('admin', 'super_admin'));
+
+// Dashboard and analytics
+router.get('/dashboard', getDashboardStats);
+router.get('/analytics', getSystemAnalytics);
+router.get('/activities', getRecentActivities);
+
+// Verification management
+router.get('/verifications', getVerificationRequests);
+// Friendly route for pending verifications used by frontend
+router.get('/verifications/pending', (req, res, next) => {
+  // Default to pending/under_review statuses and return via getVerificationRequests
+  req.query.status = req.query.status || 'submitted,under_review';
+  return getVerificationRequests(req, res, next);
+});
+router.patch('/verifications/:id/assign', validateObjectId, assignVerification);
+router.patch('/verifications/:id/approve', validateObjectId, approveVerification);
+router.patch('/verifications/:id/reject', validateObjectId, rejectVerification);
+router.patch('/verifications/:id/request-info', validateObjectId, requestAdditionalInfo);
+
+// Financial management
+router.get('/escrow', getEscrowAccount);
+
+// System settings (Super admin only)
+router.patch('/settings', authorize('super_admin'), updateSystemSettings);
+
+export default router;
