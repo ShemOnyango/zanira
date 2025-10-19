@@ -9,7 +9,13 @@ import logger from '../middleware/logger.js';
 
 export const bulkUserAction = async (req, res, next) => {
   try {
-    const { action, userIds, reason } = req.body;
+    const { action, userIds: rawUserIds, reason } = req.body;
+    // userIds may come as an array, a comma-separated string, or be omitted for cleanup
+    let userIds = [];
+    if (Array.isArray(rawUserIds)) userIds = rawUserIds;
+    else if (typeof rawUserIds === 'string') {
+      userIds = rawUserIds.split(',').map(s => s.trim()).filter(Boolean);
+    }
 
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       return res.status(403).json({
@@ -18,11 +24,20 @@ export const bulkUserAction = async (req, res, next) => {
       });
     }
 
-    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+    // Allow certain actions to operate without explicit userIds
+    if ((!userIds || userIds.length === 0) && action !== 'cleanup') {
       return res.status(400).json({
         success: false,
         error: 'User IDs array is required'
       });
+    }
+
+    // If cleanup requested and no userIds provided, compute candidates (example: inactive > 1 year)
+    if ((!userIds || userIds.length === 0) && action === 'cleanup') {
+      const cutoff = new Date();
+      cutoff.setFullYear(cutoff.getFullYear() - 1); // users inactive for >1 year
+      const candidates = await User.find({ isActive: false, createdAt: { $lt: cutoff } }).select('_id');
+      userIds = candidates.map(u => String(u._id));
     }
 
     const results = {
@@ -30,7 +45,7 @@ export const bulkUserAction = async (req, res, next) => {
       failed: []
     };
 
-    for (const userId of userIds) {
+  for (const userId of userIds) {
       try {
         const user = await User.findById(userId);
         if (!user) {
@@ -116,8 +131,11 @@ export const bulkSendNotification = async (req, res, next) => {
 
     let recipients = [];
 
+    // Support recipientIds as array or comma-separated string
     if (recipientIds && Array.isArray(recipientIds)) {
       recipients = recipientIds;
+    } else if (recipientIds && typeof recipientIds === 'string') {
+      recipients = recipientIds.split(',').map(s => s.trim()).filter(Boolean);
     } else if (recipientType) {
       const query = {};
       if (recipientType !== 'all') {
@@ -269,7 +287,24 @@ export const bulkSendEmail = async (req, res, next) => {
 
 export const bulkVerifyFundis = async (req, res, next) => {
   try {
-    const { fundiIds, status, notes } = req.body;
+    const { fundiIds: rawFundiIds, status, notes, action } = req.body;
+
+    let fundiIds = [];
+    if (Array.isArray(rawFundiIds)) fundiIds = rawFundiIds;
+    else if (typeof rawFundiIds === 'string') {
+      fundiIds = rawFundiIds.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    // If action requests all or pending, compute fundiIds accordingly
+    if ((!fundiIds || fundiIds.length === 0) && action) {
+      if (action === 'verify_all') {
+        const fundis = await Fundi.find({}).select('_id');
+        fundiIds = fundis.map(f => String(f._id));
+      } else if (action === 'verify_all_pending') {
+        const fundis = await Fundi.find({ 'verification.overallStatus': { $in: ['submitted', 'under_review', 'pending'] } }).select('_id');
+        fundiIds = fundis.map(f => String(f._id));
+      }
+    }
 
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       return res.status(403).json({
@@ -282,6 +317,10 @@ export const bulkVerifyFundis = async (req, res, next) => {
       success: [],
       failed: []
     };
+
+    if (!Array.isArray(fundiIds) || fundiIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'Fundi IDs array is required' });
+    }
 
     for (const fundiId of fundiIds) {
       try {

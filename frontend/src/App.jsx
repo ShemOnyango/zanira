@@ -20,6 +20,21 @@ import VerifyEmail from './pages/auth/VerifyEmail'
 import ClientDashboard from './pages/dashboard/ClientDashboard'
 import FundiDashboard from './pages/dashboard/FundiDashboard'
 import AdminDashboard from './pages/dashboard/AdminDashboard'
+import AdminLayout from './pages/admin/AdminLayout'
+//import AdminDashboardAdmin from './pages/admin/AdminDashboard'
+import ChatManagement from './pages/admin/ChatManagement'
+import PriceNegotiation from './pages/admin/PriceNegotiation'
+import ShopVerification from './pages/admin/ShopVerification'
+import BookingManagementAdmin from './pages/admin/BookingManagement'
+import TestimonialModeration from './pages/admin/TestimonialModeration'
+import FundiAllocation from './pages/admin/FundiAllocation'
+import MaterialReceiptTracking from './pages/admin/MaterialReceiptTracking'
+import EnhancedAnalytics from './pages/admin/EnhancedAnalytics'
+import RoleManagement from './pages/admin/RoleManagement'
+import ProductManagement from './pages/admin/ProductManagement'
+import BulkOperations from './pages/admin/BulkOperations'
+import AdvancedReporting from './pages/admin/AdvancedReporting'
+import SystemConfiguration from './pages/admin/SystemConfiguration'
 
 import BookingCreate from './pages/bookings/BookingCreate'
 import BookingDetails from './pages/bookings/BookingDetails'
@@ -29,6 +44,11 @@ import Profile from './pages/profile/Profile'
 import Wallet from './pages/wallet/Wallet'
 import Messages from './pages/messages/Messages'
 import Notifications from './pages/notifications/Notifications'
+
+import Shops from './pages/shops/Shops'
+import ShopDetail from './pages/shops/ShopDetail'
+import ShopDashboard from './pages/shops/ShopDashboard'
+import CreateShop from './pages/shops/CreateShop'
 
 import NotFound from './pages/NotFound'
 
@@ -97,6 +117,8 @@ const DashboardRouter = () => {
       return <ClientDashboard />
     case 'fundi':
       return <FundiDashboard />
+    case 'shop_owner':
+      return <Navigate to="/shop-dashboard" replace />
     case 'admin':
     case 'super_admin':
       return <AdminDashboard />
@@ -196,6 +218,53 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+        {/* Shop routes */}
+        <Route path="shops" element={<Shops />} />
+        <Route path="shops/:id" element={<ShopDetail />} />
+
+        <Route
+          path="shop-dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['shop_owner', 'admin', 'super_admin']}>
+              <ShopDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="shops/create"
+          element={
+            <ProtectedRoute allowedRoles={['shop_owner', 'admin', 'super_admin']}>
+              <CreateShop />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Admin area */}
+        <Route
+          path="admin"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
+              <AdminLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<AdminDashboard />} />
+          <Route path="chat" element={<ChatManagement />} />
+          <Route path="price-negotiation" element={<PriceNegotiation />} />
+          <Route path="shop-verification" element={<ShopVerification />} />
+          <Route path="bookings" element={<BookingManagementAdmin />} />
+          <Route path="testimonials" element={<TestimonialModeration />} />
+          <Route path="fundi-allocation" element={<FundiAllocation />} />
+          <Route path="material-receipts" element={<MaterialReceiptTracking />} />
+          <Route path="analytics" element={<EnhancedAnalytics />} />
+          <Route path="roles" element={<RoleManagement />} />
+          <Route path="products" element={<ProductManagement />} />
+          <Route path="bulk-operations" element={<BulkOperations />} />
+          <Route path="reports" element={<AdvancedReporting />} />
+          <Route path="system" element={<SystemConfiguration />} />
+        </Route>
 
         <Route path="*" element={<NotFound />} />
       </Route>

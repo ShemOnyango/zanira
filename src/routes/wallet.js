@@ -4,6 +4,7 @@ import {
   createWallet,
   getWallet,
   getTransactionHistory,
+  getWalletBalance,
   addFunds,
   confirmTopUp,
   requestWithdrawal,
@@ -19,6 +20,7 @@ router.use(protect);
 
 router.post('/', createWallet);
 router.get('/', getWallet);
+router.get('/balance', getWalletBalance);
 router.get('/transactions', getTransactionHistory);
 router.post('/topup', addFunds);
 router.post('/topup/confirm', confirmTopUp);

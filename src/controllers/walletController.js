@@ -118,6 +118,30 @@ export const getTransactionHistory = async (req, res, next) => {
   }
 };
 
+// Return only the wallet balance for the authenticated user
+export const getWalletBalance = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+
+    let wallet = await Wallet.findOne({ user: userId });
+
+    if (!wallet) {
+      // If wallet doesn't exist, respond with zeroed balance instead of 404
+      return res.status(200).json({
+        success: true,
+        data: { balance: { available: 0, pending: 0, locked: 0 } }
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: { balance: wallet.balance }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const addFunds = async (req, res, next) => {
   try {
     const { amount: rawAmount, phoneNumber: rawPhone } = req.body;

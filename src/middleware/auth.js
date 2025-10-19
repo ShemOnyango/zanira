@@ -9,6 +9,8 @@ import logger from './logger.js';
 // Protect routes - verify JWT
 export const protect = async (req, res, next) => {
   try {
+    // Allow preflight requests
+    if (req.method === 'OPTIONS') return next();
     let token;
 
     // Debug: log incoming request and whether Authorization header is present

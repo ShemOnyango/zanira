@@ -53,6 +53,69 @@ export const getUserChats = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Get all admin-scoped conversations (for admin users)
+// @route   GET /api/v1/chats/admin/conversations
+// @access  Private/Admin
+export const getAdminConversations = asyncHandler(async (req, res) => {
+  // Only admins should reach here; the route will be protected by authorize middleware
+  const { page = 1, limit = 50, search, chatType } = req.query;
+  const skip = (page - 1) * limit;
+
+  // Build base query for admin-scoped chats
+  const baseQuery = {
+    chatType: { $in: ['client_admin', 'fundi_admin', 'group'] }
+  };
+
+  if (chatType) {
+    // allow filtering by specific chatType if requested
+    baseQuery.chatType = chatType;
+  }
+
+  if (search) {
+    // simple text search on topic or last message content
+    baseQuery.$or = [
+      { 'context.topic': { $regex: search, $options: 'i' } },
+      { 'lastMessage.content': { $regex: search, $options: 'i' } }
+    ];
+  }
+
+  const [chats, total] = await Promise.all([
+    Chat.find(baseQuery)
+      .populate('participants.user', 'name email role avatar isVerified')
+      .populate('context.booking', 'description status agreedPrice')
+      .populate('lastMessage.sender', 'name role')
+      .sort({ 'lastMessage.timestamp': -1, updatedAt: -1 })
+      .skip(parseInt(skip))
+      .limit(parseInt(limit))
+      .lean(),
+    Chat.countDocuments(baseQuery)
+  ]);
+
+  const adminId = req.user._id;
+
+  const chatsWithMeta = chats.map(chat => {
+    const unreadCount = chat.unreadCount?.get(adminId.toString()) || 0;
+    return {
+      ...chat,
+      unreadCount,
+      activeParticipantsCount: chat.participants.filter(p => p.isActive).length
+    };
+  });
+
+  const totalPages = Math.ceil(total / limit);
+
+  res.status(200).json({
+    success: true,
+    count: chatsWithMeta.length,
+    data: chatsWithMeta,
+    pagination: {
+      current: parseInt(page),
+      pages: totalPages,
+      total
+    }
+  });
+});
+
 // @desc    Get single chat
 // @route   GET /api/v1/chats/:id
 // @access  Private

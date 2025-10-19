@@ -185,13 +185,36 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-6 text-center">
+          <div className="mt-6 text-center space-y-3">
             <p className="text-sm text-gray-600">
               Don't have an account?{' '}
               <Link to="/register" className="font-medium text-teal-600 hover:text-teal-500">
                 Sign up
               </Link>
             </p>
+            <div className="pt-3 border-t border-gray-200">
+              <p className="text-xs text-gray-500 mb-2">Join as:</p>
+              <div className="flex gap-2 justify-center">
+                <Link
+                  to="/register?role=client"
+                  className="text-xs px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  Client
+                </Link>
+                <Link
+                  to="/register?role=fundi"
+                  className="text-xs px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  Fundi
+                </Link>
+                <Link
+                  to="/register?role=shop_owner"
+                  className="text-xs px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  Shop Owner
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
       </div>

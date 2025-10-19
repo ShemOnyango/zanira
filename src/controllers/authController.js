@@ -83,7 +83,12 @@ export const register = async (req, res, next) => {
           user: user._id,
           shopName,
           shopType: shopType || 'general',
-          commissionRate: 10 // Default commission rate
+          commissionRate: 10, // Default commission rate
+          location: {
+            county: county || '',
+            town: town || '',
+            address: address || ''
+          }
         });
         
         // Create verification record for shop

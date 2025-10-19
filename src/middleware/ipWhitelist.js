@@ -6,6 +6,8 @@ const ADMIN_WHITELIST = (process.env.ADMIN_IP_WHITELIST || '').split(',').filter
 const ENABLE_IP_WHITELIST = process.env.ENABLE_ADMIN_IP_WHITELIST === 'true';
 
 export const ipWhitelistMiddleware = (req, res, next) => {
+  // Allow preflight requests through
+  if (req.method === 'OPTIONS') return next();
   if (!ENABLE_IP_WHITELIST || ADMIN_WHITELIST.length === 0) {
     return next();
   }

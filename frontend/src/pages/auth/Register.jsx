@@ -24,6 +24,9 @@ export default function Register() {
     role: initialRole,
     county: '',
     town: '',
+    address: '',
+    shopName: '',
+    shopType: 'general',
     terms: false,
   })
   const [showPassword, setShowPassword] = useState(false)
@@ -83,7 +86,7 @@ export default function Register() {
 
     try {
     // send full formData so server validation (passwordConfirm) receives the field
-    const registerData = formData
+  const registerData = formData
     const { data } = await authAPI.register(registerData)
       console.debug('Register response:', data)
       setAuth(data.user, data.token, data.refreshToken)
@@ -112,11 +115,11 @@ export default function Register() {
           <div className="text-center mb-8">
             <h2 className="text-3xl font-bold text-gray-900 font-heading">Create Your Account</h2>
             <p className="mt-2 text-gray-600">
-              Join as a {formData.role === 'client' ? 'Client' : 'Fundi'}
+              Join as a {formData.role === 'client' ? 'Client' : formData.role === 'fundi' ? 'Fundi' : 'Shop Owner'}
             </p>
           </div>
 
-          <div className="flex gap-4 mb-8">
+          <div className="flex gap-3 mb-8">
             <button
               type="button"
               onClick={() => setFormData({ ...formData, role: 'client' })}
@@ -138,6 +141,17 @@ export default function Register() {
               }`}
             >
               I am a Fundi
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormData({ ...formData, role: 'shop_owner' })}
+              className={`flex-1 py-3 px-4 rounded-xl font-semibold transition-all duration-200 ${
+                formData.role === 'shop_owner'
+                  ? 'bg-gradient-to-r from-teal-500 to-primary-600 text-white shadow-lg'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              I sell Materials
             </button>
           </div>
 
@@ -262,6 +276,60 @@ export default function Register() {
                 />
               </div>
             </div>
+
+            {formData.role === 'shop_owner' && (
+              <div className="space-y-6">
+                <div>
+                  <label htmlFor="shopName" className="block text-sm font-medium text-gray-700 mb-2">
+                    Shop Name
+                  </label>
+                  <input
+                    id="shopName"
+                    name="shopName"
+                    type="text"
+                    required
+                    value={formData.shopName}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all duration-200"
+                    placeholder="My Hardware Store"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
+                    Shop Street Address
+                  </label>
+                  <input
+                    id="address"
+                    name="address"
+                    type="text"
+                    required
+                    value={formData.address}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all duration-200"
+                    placeholder="123 Market St"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="shopType" className="block text-sm font-medium text-gray-700 mb-2">
+                    Shop Type
+                  </label>
+                  <select
+                    id="shopType"
+                    name="shopType"
+                    value={formData.shopType}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all duration-200"
+                  >
+                    <option value="general">General Store</option>
+                    <option value="hardware">Hardware Store</option>
+                    <option value="plumbing_supplies">Plumbing Supplies</option>
+                    <option value="electrical_supplies">Electrical Supplies</option>
+                  </select>
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>

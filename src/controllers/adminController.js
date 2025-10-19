@@ -7,6 +7,9 @@ import Shop from '../models/Shop.js';
 import Verification from '../models/Verification.js';
 import ServiceCategory from '../models/ServiceCategory.js';
 import EscrowAccount from '../models/EscrowAccount.js';
+import SystemConfig from '../models/SystemConfig.js';
+import Role from '../models/Role.js';
+import Notification from '../models/Notification.js';
 import logger from '../middleware/logger.js';
 
 // @desc    Get admin dashboard statistics
@@ -754,6 +757,191 @@ export const getRecentActivities = async (req, res, next) => {
         verifications: recentVerifications
       }
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get system configuration (singleton)
+// @route   GET /api/v1/admin/system/config
+// @access  Private/Admin
+export const getSystemConfig = async (req, res, next) => {
+  try {
+    let config = await SystemConfig.findOne();
+    if (!config) {
+      // return sensible defaults if not configured yet
+      const defaults = {
+        general: {
+          platformName: 'Zanira BuildLink',
+          defaultLanguage: 'en',
+          timezone: 'Africa/Nairobi',
+          currency: 'KES',
+          defaultCommission: 10,
+          autoApproveFundis: false
+        },
+        security: {
+          require2FA: false,
+          strongPasswords: true,
+          sessionTimeout: 60,
+          maxLoginAttempts: 5
+        },
+        notifications: {
+          emailEnabled: true,
+          pushEnabled: false,
+          smsEnabled: false
+        },
+        payments: {
+          mpesaEnvironment: 'sandbox',
+          escrowReleaseHours: 24,
+          clientCommission: 0,
+          fundiCommission: 10,
+          shopCommission: 5
+        },
+        email: {},
+        database: {}
+      };
+
+      return res.status(200).json({ success: true, data: defaults });
+    }
+
+    return res.status(200).json({ success: true, data: config });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update system configuration (upsert singleton)
+// @route   PATCH /api/v1/admin/system/config
+// @access  Private/Admin
+export const updateSystemConfig = async (req, res, next) => {
+  try {
+    const incoming = req.body || {};
+
+    let config = await SystemConfig.findOne();
+    if (!config) {
+      config = new SystemConfig(incoming);
+    } else {
+      // shallow merge by top-level sections
+      Object.keys(incoming).forEach(key => {
+        config[key] = { ...(config[key] || {}), ...(incoming[key] || {}) };
+      });
+      config.updatedAt = new Date();
+    }
+
+    await config.save();
+
+    return res.status(200).json({ success: true, data: config });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get role management overview
+// @route   GET /api/v1/admin/roles
+// @access  Private/Admin
+export const getRoleManagement = async (req, res, next) => {
+  try {
+    // Load defined roles and user counts per role
+    // Role model is optional; fall back to a static list if missing
+    let roles = [];
+    try {
+      roles = await Role.find().lean();
+    } catch (e) {
+      // fallback roles
+      roles = [
+        { key: 'super_admin', name: 'Super Admin', description: 'Full access' },
+        { key: 'admin', name: 'Admin', description: 'Administrative access' },
+        { key: 'moderator', name: 'Moderator', description: 'Moderation access' },
+        { key: 'support', name: 'Support', description: 'Support staff' },
+        { key: 'finance', name: 'Finance', description: 'Finance team' }
+      ];
+    }
+
+    // Count users per role
+    const usersByRole = {};
+    for (const r of roles) {
+      const count = await User.countDocuments({ role: r.key });
+      usersByRole[r.key] = count;
+    }
+
+    // Get a short list of users (first 20)
+    const users = await User.find().select('firstName lastName email role isActive').limit(20).lean();
+
+    res.status(200).json({ success: true, data: { roles, users, usersByRole } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Create a new role
+// @route   POST /api/v1/admin/roles
+// @access  Private/SuperAdmin or Admin
+export const createRole = async (req, res, next) => {
+  try {
+    const { key, name, description, permissions } = req.body;
+    if (!key || !name) return res.status(400).json({ success: false, error: 'key and name are required' });
+
+    const exists = await Role.findOne({ key });
+    if (exists) return res.status(409).json({ success: false, error: 'Role already exists' });
+
+    const role = await Role.create({ key, name, description, permissions: permissions || [] });
+    res.status(201).json({ success: true, data: role });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update a role
+// @route   PATCH /api/v1/admin/roles/:key
+// @access  Private/Admin
+export const updateRole = async (req, res, next) => {
+  try {
+    const { key } = req.params;
+    const updates = req.body;
+    const role = await Role.findOneAndUpdate({ key }, updates, { new: true, runValidators: true });
+    if (!role) return res.status(404).json({ success: false, error: 'Role not found' });
+    res.status(200).json({ success: true, data: role });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete a role
+// @route   DELETE /api/v1/admin/roles/:key
+// @access  Private/Admin
+export const deleteRole = async (req, res, next) => {
+  try {
+    const { key } = req.params;
+    const role = await Role.findOneAndDelete({ key });
+    if (!role) return res.status(404).json({ success: false, error: 'Role not found' });
+    res.status(200).json({ success: true, message: 'Role deleted' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update a user's role (admin UI action)
+// @route   PATCH /api/v1/admin/users/:id/role
+// @access  Private/Admin
+export const adminUpdateUserRole = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { role: newRole, permissions } = req.body;
+    if (!newRole) return res.status(400).json({ success: false, error: 'role is required' });
+
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    // Prevent changing super_admin role via admin unless requestor is super_admin
+    if (user.role === 'super_admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Cannot change super admin role' });
+    }
+
+    user.role = newRole;
+    if (permissions) user.permissions = permissions;
+    await user.save();
+
+    res.status(200).json({ success: true, data: user });
   } catch (error) {
     next(error);
   }

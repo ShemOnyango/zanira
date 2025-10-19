@@ -9,10 +9,18 @@ import {
   getSystemAnalytics,
   getEscrowAccount,
   updateSystemSettings,
+  getSystemConfig,
+  updateSystemConfig,
+  getRoleManagement,
+  createRole,
+  updateRole,
+  deleteRole,
+  adminUpdateUserRole,
   getRecentActivities
 } from '../controllers/adminController.js';
 import { protect, authorize, hasPermission } from '../middleware/auth.js';
 import { validateObjectId } from '../middleware/validation.js';
+import priceNegotiationsRoutes from './priceNegotiations.js';
 
 const router = express.Router();
 
@@ -43,5 +51,21 @@ router.get('/escrow', getEscrowAccount);
 
 // System settings (Super admin only)
 router.patch('/settings', authorize('super_admin'), updateSystemSettings);
+
+// System configuration UI endpoints
+router.get('/system/config', getSystemConfig);
+router.patch('/system/config', updateSystemConfig);
+
+// Role management
+router.get('/roles', getRoleManagement);
+router.post('/roles', authorize('super_admin'), createRole);
+router.patch('/roles/:key', authorize('super_admin'), updateRole);
+router.delete('/roles/:key', authorize('super_admin'), deleteRole);
+
+// Admin user role update
+router.patch('/users/:id/role', adminUpdateUserRole);
+
+// Mount price negotiations under admin namespace
+router.use('/price-negotiations', priceNegotiationsRoutes);
 
 export default router;

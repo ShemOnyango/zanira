@@ -10,6 +10,7 @@ export default function FormInput({
   disabled = false,
   className = '',
   icon: Icon,
+  helpText,
   ...props
 }) {
   return (
@@ -40,6 +41,7 @@ export default function FormInput({
         />
       </div>
       {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
+      {helpText && <p className="mt-1 text-sm text-gray-500">{helpText}</p>}
     </div>
   )
 }

@@ -4,6 +4,7 @@ import {
   getUserChats,
   getChat,
   createChat,
+  getAdminConversations,
   addParticipant,
   removeParticipant,
   getChatHistory,
@@ -12,6 +13,7 @@ import {
   getOrCreateBookingChat
 } from '../controllers/chatController.js';
 import { protect } from '../middleware/auth.js';
+import { authorize } from '../middleware/auth.js';
 import { validateObjectId } from '../middleware/validation.js';
 
 const router = express.Router();
@@ -20,6 +22,8 @@ const router = express.Router();
 router.use(protect);
 
 router.get('/', getUserChats);
+// Admin scoped conversations listing
+router.get('/admin/conversations', authorize('admin', 'super_admin'), getAdminConversations);
 router.get('/:id', validateObjectId, getChat);
 router.get('/:id/history', validateObjectId, getChatHistory);
 router.post('/', createChat);

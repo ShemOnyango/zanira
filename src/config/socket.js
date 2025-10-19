@@ -146,11 +146,41 @@ class SocketService {
       socket.on('disconnect', (reason) => {
         logger.info(`User disconnected: ${socket.userId} - reason: ${reason}`);
         this.handleDisconnect(socket, reason);
+        // Clear any heartbeat interval set on this socket
+        if (socket.__heartbeatInterval) {
+          clearInterval(socket.__heartbeatInterval);
+          delete socket.__heartbeatInterval;
+        }
       });
 
       socket.on('error', (error) => {
         logger.error(`Socket error for user ${socket.userId}:`, error);
       });
+
+      // Lightweight ping handler for client-initiated health checks
+      socket.on('ping', (cb) => {
+        try {
+          if (typeof cb === 'function') cb('pong');
+        } catch (e) {
+          logger.warn('Ping handler error', e);
+        }
+      });
+
+      // Server-side heartbeat: emit 'ping' and expect 'pong' via callback
+      // Store interval reference on socket for cleanup on disconnect
+      socket.__heartbeatInterval = setInterval(() => {
+        if (socket && socket.connected) {
+          try {
+            socket.emit('ping', (response) => {
+              if (response !== 'pong') {
+                logger.warn(`Socket heartbeat failed for user ${socket.userId} - response=${response}`);
+              }
+            });
+          } catch (e) {
+            logger.warn('Socket heartbeat emit error', e);
+          }
+        }
+      }, 30000);
     });
   }
 

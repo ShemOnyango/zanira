@@ -38,6 +38,11 @@ import apiKeyRoutes from './src/routes/apiKeys.js';
 import advancedAnalyticsRoutes from './src/routes/advancedAnalytics.js';
 import biddingRoutes from './src/routes/bidding.js';
 import filesRoutes from './src/routes/files.js';
+import reportsRoutes from './src/routes/reports.js';
+import priceNegotiationsRoutes from './src/routes/priceNegotiations.js';
+import materialReceiptRoutes from './src/routes/materialReceipts.js';
+import testimonialRoutes from './src/routes/testimonials.js';
+import productRoutes from './src/routes/products.js';
 
 // Import middleware
 import errorHandler from './src/middleware/errorHandler.js';
@@ -96,13 +101,29 @@ app.use(hpp({
 // Compression middleware
 app.use(compression());
 
-// CORS middleware
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
+// CORS configuration — apply early and explicitly handle preflight
+// Support multiple development origins and common local addresses
+const allowedOrigins = new Set([
+  process.env.FRONTEND_URL || 'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173', // vite default
+  'http://127.0.0.1:5173'
+]);
+
+const corsOptionsDelegate = (req, callback) => {
+  const origin = req.header('Origin');
+  const options = {
+    origin: allowedOrigins.has(origin) ? origin : false,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+  };
+  callback(null, options);
+};
+
+app.use(cors(corsOptionsDelegate));
+// Explicitly respond to preflight requests for any route
+app.options('*', cors(corsOptionsDelegate));
 
 // Request logging (use morgan with winston stream)
 app.use(morgan(process.env.MORGAN_FORMAT || 'combined', { stream: logger.stream }));
@@ -131,6 +152,31 @@ app.get('/api/health', (req, res) => {
       notifications: 'active'
     }
   });
+});
+
+// Socket health endpoint
+app.get('/api/socket-health', (req, res) => {
+  try {
+    // `io` is the SocketService instance created above
+    const socketService = io;
+    const connectedUsers = typeof socketService.getOnlineUsers === 'function'
+      ? socketService.getOnlineUsers()
+      : [];
+
+    res.status(200).json({
+      connectedUsers: connectedUsers.length,
+      socketStatus: 'healthy',
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    logger.error('Socket health check failed', err);
+    res.status(500).json({
+      connectedUsers: 0,
+      socketStatus: 'unhealthy',
+      error: err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // API routes
@@ -170,6 +216,11 @@ app.use('/api/v1/api-keys', apiKeyRoutes);
 app.use('/api/v1/advanced-analytics', advancedAnalyticsRoutes);
 app.use('/api/v1/bidding', biddingRoutes);
 app.use('/api/v1/files', filesRoutes);
+app.use('/api/v1/reports', reportsRoutes);
+app.use('/api/v1/material-receipts', materialReceiptRoutes);
+app.use('/api/v1/price-negotiations', priceNegotiationsRoutes);
+app.use('/api/v1/testimonials', testimonialRoutes);
+app.use('/api/v1/products', productRoutes);
 
 // Serve uploaded files statically (if needed)
 app.use('/api/v1/uploads', express.static('uploads'));
