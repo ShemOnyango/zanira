@@ -3,7 +3,7 @@ import Booking from '../models/Booking.js';
 import Payment from '../models/Payment.js';
 import Fundi from '../models/Fundi.js';
 import Client from '../models/Client.js';
-import logger from '../middleware/logger.js';
+// import logger from '../middleware/logger.js';
 
 export const getRevenueAnalytics = async (req, res, next) => {
   try {
@@ -35,21 +35,26 @@ export const getRevenueAnalytics = async (req, res, next) => {
       let key;
 
       switch (groupBy) {
-        case 'hour':
+        case 'hour': {
           key = `${date.toISOString().split('T')[0]} ${date.getHours()}:00`;
           break;
-        case 'day':
+        }
+        case 'day': {
           key = date.toISOString().split('T')[0];
           break;
-        case 'week':
+        }
+        case 'week': {
           const weekNum = Math.ceil(date.getDate() / 7);
           key = `${date.getFullYear()}-W${weekNum}`;
           break;
-        case 'month':
+        }
+        case 'month': {
           key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
           break;
-        default:
+        }
+        default: {
           key = date.toISOString().split('T')[0];
+        }
       }
 
       if (!groupedData[key]) {
@@ -164,7 +169,7 @@ export const getBookingTrends = async (req, res, next) => {
 
     const totalBookings = bookings.length;
     const byStatus = {};
-    const byServiceType = {};
+    // const byServiceType = {};
 
     bookings.forEach(booking => {
       byStatus[booking.status] = (byStatus[booking.status] || 0) + 1;

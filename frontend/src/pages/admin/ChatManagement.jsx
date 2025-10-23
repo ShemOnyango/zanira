@@ -54,7 +54,11 @@ const ChatManagement = () => {
 
   const handleNewMessage = (data) => {
     if (selectedChat && data.chatId === selectedChat._id) {
-      setMessages(prev => [...prev, data.message])
+      setMessages(prev => {
+        const base = Array.isArray(prev) ? prev : []
+        const incoming = data?.message || data
+        return [...base, incoming]
+      })
     }
   }
 
@@ -62,7 +66,19 @@ const ChatManagement = () => {
     setSelectedChat(chat)
     try {
       const messagesData = await fetchMessages(chat._id)
-      if (messagesData) setMessages(messagesData.data || [])
+      let msgs = []
+
+      if (messagesData) {
+        if (Array.isArray(messagesData)) msgs = messagesData
+        else if (messagesData.data && Array.isArray(messagesData.data)) msgs = messagesData.data
+        else if (messagesData.data && Array.isArray(messagesData.data.messages)) msgs = messagesData.data.messages
+        else {
+          const maybeArray = Object.values(messagesData).find(v => Array.isArray(v))
+          if (Array.isArray(maybeArray)) msgs = maybeArray
+        }
+      }
+
+      setMessages(msgs)
     } catch (error) {
       console.error('Failed to load messages:', error)
     }
@@ -166,7 +182,7 @@ const ChatManagement = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages.map(message => (
+              {(Array.isArray(messages) ? messages : []).map(message => (
                 <div
                   key={message._id}
                   className={`flex ${message.sender === 'admin' ? 'justify-end' : 'justify-start'}`}

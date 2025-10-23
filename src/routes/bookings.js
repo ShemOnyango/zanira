@@ -6,9 +6,12 @@ import {
   updateBookingStatus,
   confirmCompletion,
   initiatePayment,
-  releasePayment
+  releasePayment,
+  assignFundiToBooking,
+  findMatchingFundis
+  , pushBookingToFundis
 } from '../controllers/bookingController.js';
-import { protect, authorize, hasPermission } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 import { validateObjectId } from '../middleware/validation.js';
 import { paymentRateLimit, fraudDetection, validatePaymentRequest } from '../middleware/paymentSecurity.js';
 
@@ -39,5 +42,13 @@ router.patch('/:id/status', authorize('fundi'), validateObjectId, updateBookingS
 
 // Admin routes
 router.patch('/:id/release-payment', authorize('admin', 'super_admin'), validateObjectId, releasePayment);
+
+// Add these routes after the existing ones:
+
+// Admin routes for fundi assignment
+router.get('/:id/matching-fundis', authorize('admin', 'super_admin'), validateObjectId, findMatchingFundis);
+router.post('/:id/assign-fundi', authorize('admin', 'super_admin'), validateObjectId, assignFundiToBooking);
+// Push booking to matching fundis (notify them to apply)
+router.post('/:id/push-to-fundis', authorize('admin', 'super_admin'), validateObjectId, pushBookingToFundis);
 
 export default router;

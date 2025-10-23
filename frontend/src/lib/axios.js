@@ -61,8 +61,15 @@ axiosInstance.interceptors.response.use(
 
         return axiosInstance(originalRequest)
       } catch (refreshError) {
-        useAuthStore.getState().logout()
-        window.location.href = '/login'
+        const authState = useAuthStore.getState()
+        const role = authState.user?.role
+        authState.logout()
+        // If the user was an admin, redirect to home page; otherwise to login
+        if (role === 'admin' || role === 'super_admin') {
+          window.location.href = '/'
+        } else {
+          window.location.href = '/login'
+        }
         return Promise.reject(refreshError)
       }
     }

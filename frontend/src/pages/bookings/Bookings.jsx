@@ -14,7 +14,7 @@ import {
   Plus
 } from 'lucide-react'
 import { useApi } from '../../hooks/useApi'
-import { bookingAPI } from '../../lib/api'
+import { bookingAPI, matchingAPI } from '../../lib/api'
 import { useAuthStore } from '../../store/authStore'
 import LoadingSpinner from '../../components/common/LoadingSpinner'
 import ErrorMessage from '../../components/common/ErrorMessage'
@@ -35,9 +35,14 @@ export default function Bookings() {
   })
   const [showFilters, setShowFilters] = useState(false)
   const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [adminMatchModalOpen, setAdminMatchModalOpen] = useState(false)
+  const [selectedForMatch, setSelectedForMatch] = useState(null)
+  const [recommendedFundis, setRecommendedFundis] = useState([])
 
   // API hook
   const { execute: fetchBookings } = useApi(bookingAPI.getAll, { showToast: false })
+  const { execute: findFundis, loading: findingFundis } = useApi(matchingAPI.findFundis, { showToast: false })
+  const { execute: assignFundi } = useApi(bookingAPI.assignFundi, { showToast: true })
 
   // Load bookings
   useEffect(() => {
@@ -384,6 +389,27 @@ export default function Bookings() {
                         <MoreVertical className="w-5 h-5" />
                       </button>
                     </div>
+                    {/* Admin-only: Find Matching Fundis for this booking */}
+                    {(user?.role === 'admin' || user?.role === 'super_admin') && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            setSelectedForMatch(booking)
+                            setAdminMatchModalOpen(true)
+                            const resp = await findFundis({ serviceId: booking.service?._id, location: booking.location, budget: booking.totalAmount })
+                            const payload = resp?.data ?? resp ?? []
+                            setRecommendedFundis(Array.isArray(payload) ? payload : (payload?.fundis || []))
+                          } catch (err) {
+                            console.error('Admin find fundis error:', err)
+                            setRecommendedFundis([])
+                          }
+                        }}
+                        className="bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600 transition-colors"
+                        title="Find Matching Fundis"
+                      >
+                        <Search className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -442,6 +468,52 @@ export default function Bookings() {
               Cancel
             </button>
           </div>
+        </div>
+      </Modal>
+
+      {/* Admin: Find Matching Fundis Modal */}
+      <Modal
+        isOpen={adminMatchModalOpen}
+        onClose={() => { setAdminMatchModalOpen(false); setRecommendedFundis([]); setSelectedForMatch(null) }}
+        title={`Matching Fundis for ${selectedForMatch?.service?.name || ''}`}
+        size="lg"
+      >
+        <div className="space-y-4">
+          {findingFundis ? (
+            <div className="flex justify-center py-8">
+              <LoadingSpinner size="md" />
+            </div>
+          ) : recommendedFundis.length > 0 ? (
+            recommendedFundis.map(fundi => (
+              <div key={fundi._id} className="border rounded-lg p-4 flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <img src={fundi.profilePhoto || '/default-avatar.png'} alt={fundi.firstName} className="w-12 h-12 rounded-full" />
+                  <div>
+                    <p className="font-medium">{fundi.firstName} {fundi.lastName}</p>
+                    <p className="text-sm text-gray-500">{fundi.skills?.join(', ')}</p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={async () => {
+                      try {
+                        await assignFundi(selectedForMatch._id, fundi._id)
+                        setAdminMatchModalOpen(false)
+                        loadBookings()
+                      } catch (err) {
+                        console.error('Assign error', err)
+                      }
+                    }}
+                    className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600"
+                  >
+                    Assign
+                  </button>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-8 text-gray-500">No matching fundis found.</div>
+          )}
         </div>
       </Modal>
     </div>

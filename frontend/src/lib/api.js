@@ -29,6 +29,10 @@ export const bookingAPI = {
   initiatePayment: (id, paymentData) => axios.post(`/bookings/${id}/payment`, paymentData),
   assignFundi: (id, fundiId) => axios.post(`/bookings/${id}/assign-fundi`, { fundiId }),
   negotiatePrice: (id, priceData) => axios.post(`/bookings/${id}/negotiate-price`, priceData),
+  assignFundi: (id, fundiData) => axios.post(`/bookings/${id}/assign-fundi`, fundiData),
+  getMatchingFundis: (id) => axios.get(`/bookings/${id}/matching-fundis`),
+  // Push booking to all matching fundis (admin action)
+  pushToFundis: (id) => axios.post(`/bookings/${id}/push-to-fundis`),
 }
 
 // Wallet API - VERIFIED CORRECT
@@ -124,13 +128,13 @@ export const shopAPI = {
   create: (data) => axios.post('/shops', data),
   getAll: (params) => axios.get('/shops', { params }),
   getById: (id) => axios.get(`/shops/${id}`),
-  update: (id, data) => axios.patch(`/shops/${id}`, data),
+  update: (id, data) => axios.put(`/shops/${id}`, data),
   delete: (id) => axios.delete(`/shops/${id}`),
-  verify: (id) => axios.patch(`/shops/${id}/verify`),
+  verify: (id, data) => axios.patch(`/shops/${id}/verify`, data),
   manageInventory: (id, data) => axios.post(`/shops/${id}/inventory`, data),
   getAnalytics: (id) => axios.get(`/shops/${id}/analytics`),
   setCommission: (id, commissionRate) => axios.patch(`/shops/${id}/commission`, { commissionRate }),
-  getPendingShops: () => axios.get('/shops?status=pending'),
+  getPendingShops: () => axios.get('/shops?verificationStatus=pending'),
   getShopOrders: (id) => axios.get(`/shops/${id}/orders`),
 }
 

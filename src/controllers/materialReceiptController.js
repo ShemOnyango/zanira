@@ -1,6 +1,6 @@
 import MaterialReceipt from '../models/MaterialReceipt.js'
-import Booking from '../models/Booking.js'
-import Shop from '../models/Shop.js'
+//import Booking from '../models/Booking.js'
+//import Shop from '../models/Shop.js'
 
 export const listMaterialReceipts = async (req, res, next) => {
   try {

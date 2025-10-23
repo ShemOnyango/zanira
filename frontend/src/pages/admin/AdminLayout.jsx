@@ -1,7 +1,8 @@
-// frontend/src/pages/admin/AdminLayout.jsx
+// Updated AdminLayout.jsx
 import { useState } from 'react'
 import { Link, useLocation, Outlet } from 'react-router-dom'
 import {
+  LayoutDashboard,
   MessageSquare,
   DollarSign,
   ShoppingCart,
@@ -16,7 +17,7 @@ import {
   Shield,
   Menu,
   X,
-  Home
+  TrendingUp
 } from 'lucide-react'
 
 const AdminLayout = () => {
@@ -24,99 +25,128 @@ const AdminLayout = () => {
   const location = useLocation()
 
   const navigation = [
-    { name: 'Dashboard', href: '/admin', icon: Home },
-    { name: 'Chat Management', href: '/admin/chat', icon: MessageSquare },
-    { name: 'Price Negotiation', href: '/admin/price-negotiation', icon: DollarSign },
-    { name: 'Shop Verification', href: '/admin/shop-verification', icon: ShoppingCart },
-    { name: 'Booking Management', href: '/admin/bookings', icon: Calendar },
-    { name: 'Testimonial Moderation', href: '/admin/testimonials', icon: Star },
-    { name: 'Fundi Allocation', href: '/admin/fundi-allocation', icon: Users },
-    { name: 'Material Receipts', href: '/admin/material-receipts', icon: Package },
-    { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
-    { name: 'Role Management', href: '/admin/roles', icon: Shield },
-    { name: 'Bulk Operations', href: '/admin/bulk-operations', icon: Zap },
-    { name: 'Reporting', href: '/admin/reports', icon: FileText },
-    { name: 'System Config', href: '/admin/system', icon: Settings },
+    { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
+    { name: 'Analytics', href: '/admin/analytics', icon: TrendingUp },
+    { name: 'Bookings', href: '/admin/bookings', icon: Calendar },
+    { name: 'Shops', href: '/admin/shop-verification', icon: ShoppingCart },
+    { name: 'Users', href: '/admin/fundi-allocation', icon: Users },
+    { name: 'Chat', href: '/admin/chat', icon: MessageSquare },
+    { name: 'Products', href: '/admin/products', icon: Package },
+    { name: 'Testimonials', href: '/admin/testimonials', icon: Star },
+    { name: 'Reports', href: '/admin/reports', icon: FileText },
+    { name: 'Services', href: '/admin/services', icon: Package },
+    { name: 'Settings', href: '/admin/system', icon: Settings }
   ]
 
-  const isActive = (path) => {
-    if (path === '/admin') {
-      return location.pathname === '/admin'
-    }
-    return location.pathname.startsWith(path)
-  }
+  const isActive = (path) => location.pathname === path
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:inset-0 transition duration-200 ease-in-out`}>
-        <div className="flex items-center justify-between h-16 px-4 bg-gray-800">
-          <span className="text-white font-bold text-xl">Admin Panel</span>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-gray-400 hover:text-white"
-          >
-            <X size={20} />
-          </button>
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Sidebar for desktop */}
+      <div className="hidden lg:flex lg:flex-shrink-0">
+        <div className="w-64 bg-white shadow-xl border-r border-gray-200 flex flex-col">
+          {/* Logo Section */}
+          <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg"></div>
+              <span className="text-xl font-bold text-gray-800">Admin</span>
+            </div>
+          </div>
+          
+          {/* Navigation */}
+          <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+            {navigation.map((item) => {
+              const Icon = item.icon
+              return (
+                <Link
+                  key={item.name}
+                  to={item.href}
+                  className={`flex items-center px-3 py-3 text-sm font-medium rounded-lg transition-all duration-200 ${
+                    isActive(item.href)
+                      ? 'bg-blue-50 text-blue-700 border-r-2 border-blue-700'
+                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                  }`}
+                >
+                  <Icon size={18} className="mr-3" />
+                  {item.name}
+                </Link>
+              )
+            })}
+          </nav>
         </div>
-        
-        <nav className="mt-8 px-4 space-y-2">
-          {navigation.map((item) => {
-            const Icon = item.icon
-            return (
-              <Link
-                key={item.name}
-                to={item.href}
-                onClick={() => setSidebarOpen(false)}
-                className={`flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                  isActive(item.href)
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                }`}
-              >
-                <Icon size={18} className="mr-3" />
-                {item.name}
-              </Link>
-            )
-          })}
-        </nav>
       </div>
 
-      {/* Main content */}
-      <div className="lg:ml-64">
-        {/* Top bar */}
-        <header className="bg-white shadow-sm border-b">
-          <div className="flex items-center justify-between h-16 px-4 sm:px-6 lg:px-8">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden text-gray-500 hover:text-gray-700"
-            >
-              <Menu size={20} />
-            </button>
-            <div className="flex-1 flex justify-between items-center">
-              <h1 className="text-2xl font-semibold text-gray-900">
-                {navigation.find(item => isActive(item.href))?.name || 'Admin'}
-              </h1>
-              <div className="flex items-center space-x-4">
-                <span className="text-sm text-gray-600">Welcome, Admin</span>
+      {/* Mobile sidebar */}
+      {sidebarOpen && (
+        <div className="lg:hidden fixed inset-0 z-50">
+          <div 
+            className="fixed inset-0 bg-gray-600 bg-opacity-75"
+            onClick={() => setSidebarOpen(false)}
+          />
+          <div className="fixed inset-y-0 left-0 w-64 bg-white shadow-xl transform transition-transform duration-300 ease-in-out">
+            <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg"></div>
+                <span className="text-xl font-bold text-gray-800">Admin</span>
               </div>
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <nav className="px-4 py-6 space-y-1">
+              {navigation.map((item) => {
+                const Icon = item.icon
+                return (
+                  <Link
+                    key={item.name}
+                    to={item.href}
+                    onClick={() => setSidebarOpen(false)}
+                    className={`flex items-center px-3 py-3 text-sm font-medium rounded-lg transition-all duration-200 ${
+                      isActive(item.href)
+                        ? 'bg-blue-50 text-blue-700 border-r-2 border-blue-700'
+                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    }`}
+                  >
+                    <Icon size={18} className="mr-3" />
+                    {item.name}
+                  </Link>
+                )
+              })}
+            </nav>
+          </div>
+        </div>
+      )}
+
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top bar */}
+        <header className="bg-white shadow-sm border-b border-gray-200">
+          <div className="flex items-center justify-between h-16 px-6">
+            <div className="flex items-center">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden text-gray-500 hover:text-gray-700 mr-4"
+              >
+                <Menu size={20} />
+              </button>
+              <h1 className="text-2xl font-semibold text-gray-900">
+                {navigation.find(item => isActive(item.href))?.name || 'Admin Dashboard'}
+              </h1>
+            </div>
+            <div className="flex items-center space-x-4">
+              <span className="text-sm text-gray-600">Welcome, Admin</span>
             </div>
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="p-4 sm:p-6 lg:p-8">
+        {/* Page content - This will grow and push footer down */}
+        <main className="flex-1 bg-gray-50">
           <Outlet />
         </main>
       </div>
-
-      {/* Overlay for mobile */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-gray-600 bg-opacity-75 z-40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
     </div>
   )
 }

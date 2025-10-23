@@ -1,6 +1,6 @@
 import Fundi from '../models/Fundi.js';
-import Booking from '../models/Booking.js';
-import ServiceCategory from '../models/ServiceCategory.js';
+//import Booking from '../models/Booking.js';
+//import ServiceCategory from '../models/ServiceCategory.js';
 import logger from '../middleware/logger.js';
 
 class MatchingService {

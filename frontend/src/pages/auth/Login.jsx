@@ -79,6 +79,29 @@ export default function Login() {
         isAuthenticated: authState.isAuthenticated
       })
       
+      // Try to fetch full profile (populated shopProfile) so we can make
+      // a routing decision for shop owners who haven't created a shop yet.
+      try {
+        const { data: meResp } = await authAPI.getMe()
+        const meUser = meResp?.data?.user || null
+        if (meUser) {
+          // update state with fresh profile
+          useAuthStore.getState().setAuth(meUser, token, refreshToken)
+
+          // If it's a shop_owner with no shopProfile, send them to create shop
+          const urlParams = new URLSearchParams(location.search)
+          const nextParam = urlParams.get('next')
+
+          if (meUser.role === 'shop_owner' && !meUser.shopProfile) {
+            toast.success('Welcome! Please complete your shop profile')
+            navigate(nextParam || '/shops/create', { replace: true })
+            return
+          }
+        }
+      } catch (err) {
+        console.debug('Failed to fetch /auth/me after login:', err)
+      }
+
       toast.success('Welcome back!')
       console.log('Navigating to:', from)
       navigate(from, { replace: true })

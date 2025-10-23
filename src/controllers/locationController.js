@@ -1,6 +1,6 @@
 import LocationTracking from '../models/LocationTracking.js';
 import Booking from '../models/Booking.js';
-import Fundi from '../models/Fundi.js';
+// import Fundi from '../models/Fundi.js';
 import notificationService from '../services/notificationService.js';
 import logger from '../middleware/logger.js';
 
@@ -199,7 +199,7 @@ export const getTrackingSession = async (req, res, next) => {
     // For clients, mask precise location if required
     let locationData = session.locations;
     if (isClient && !session.settings.sharePreciseLocation) {
-      locationData = this.maskPreciseLocation(locationData);
+      locationData = maskPreciseLocation(locationData);
     }
 
     res.status(200).json({
@@ -315,7 +315,7 @@ export const getLocationHistory = async (req, res, next) => {
 
     // For clients, mask precise location if required
     if (session.client.toString() === userId.toString() && !session.settings.sharePreciseLocation) {
-      locations = this.maskPreciseLocation(locations);
+      locations = maskPreciseLocation(locations);
     }
 
     res.status(200).json({

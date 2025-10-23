@@ -1,5 +1,5 @@
 import Referral from '../models/Referral.js';
-import User from '../models/User.js';
+//import User from '../models/User.js';
 import Wallet from '../models/Wallet.js';
 import Booking from '../models/Booking.js';
 import logger from '../middleware/logger.js';

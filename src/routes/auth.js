@@ -21,7 +21,7 @@ import {
   validateLogin,
   validateForgotPassword,
   validateResetPassword,
-  validateUpdatePassword
+  // validateUpdatePassword
 } from '../middleware/validation.js';
 import { protect } from '../middleware/auth.js';
 

@@ -9,10 +9,11 @@ import {
   generateToken, 
   generateRefreshToken, 
   verifyRefreshToken, 
+  verifyToken,
   generate2FASecret, 
   generate2FAQrCode, 
   verify2FAToken, 
-  generateVerificationCode,
+  // generateVerificationCode,
   generatePasswordResetToken,
   generateEmailVerificationToken,
   sanitizeUser 
@@ -734,25 +735,28 @@ export const getMe = async (req, res, next) => {
   try {
     let userData = sanitizeUser(req.user);
 
-    // Populate role-specific data
+    // Populate role-specific data - fix case blocks
     switch (req.user.role) {
-      case 'client':
+      case 'client': {
         const client = await Client.findOne({ user: req.user._id });
         userData.clientProfile = client;
         break;
-      case 'fundi':
+      }
+      case 'fundi': {
         const fundi = await Fundi.findOne({ user: req.user._id });
         userData.fundiProfile = fundi;
         break;
-      case 'admin':
-      case 'super_admin':
+      }
+      case 'admin': {
         const admin = await Admin.findOne({ user: req.user._id });
         userData.adminProfile = admin;
         break;
-      case 'shop_owner':
+      }
+      case 'shop_owner': {
         const shop = await Shop.findOne({ user: req.user._id });
         userData.shopProfile = shop;
         break;
+      }
     }
 
     res.status(200).json({
@@ -765,6 +769,7 @@ export const getMe = async (req, res, next) => {
     next(error);
   }
 };
+
 
 export const adminLogin = async (req, res, next) => {
   try {

@@ -4,10 +4,66 @@ import Payment from '../models/Payment.js';
 import Fundi from '../models/Fundi.js';
 import Client from '../models/Client.js';
 import User from '../models/User.js';
-import Notification from '../models/Notification.js';
+// Notification model not used in this controller (notifications are sent via notificationService)
 import Chat from '../models/Chat.js';
 import notificationService from '../services/notificationService.js';
 import logger from '../middleware/logger.js';
+import { normalizeRole } from '../utils/roleUtils.js';
+
+// --- Payment/Compensation helpers (minimal implementations)
+// These are small, safe helper functions to perform refunds/compensation
+// in the dispute resolution flow. They create Payment records and update
+// booking/payment statuses where appropriate. Integrate with your
+// existing payments/escrow logic as needed.
+const processRefund = async (booking, amount) => {
+  try {
+    if (!booking || !amount || amount <= 0) return null;
+
+    // Create a payment record representing the refund (minimal)
+    const payment = await Payment.create({
+      booking: booking._id || booking,
+      amount,
+      type: 'refund',
+      status: 'refunded',
+      method: 'platform',
+      createdAt: new Date()
+    });
+
+    // Mark booking as refunded if fully refunded
+    if (booking && booking.status) {
+      booking.status = 'refunded';
+      try { await booking.save(); } catch (e) { /* non-fatal */ }
+    }
+
+    logger.info(`Processed refund of ${amount} for booking ${booking._id || booking}`);
+    return payment;
+  } catch (err) {
+    logger.error('processRefund error:', err);
+    throw err;
+  }
+};
+
+const processCompensation = async (booking, amount) => {
+  try {
+    if (!booking || !amount || amount <= 0) return null;
+
+    // Create a payment record for compensation (minimal)
+    const payment = await Payment.create({
+      booking: booking._id || booking,
+      amount,
+      type: 'refund',
+      status: 'released',
+      method: 'platform_compensation',
+      createdAt: new Date()
+    });
+
+    logger.info(`Processed compensation of ${amount} for booking ${booking._id || booking}`);
+    return payment;
+  } catch (err) {
+    logger.error('processCompensation error:', err);
+    throw err;
+  }
+};
 
 // @desc    Raise a dispute
 // @route   POST /api/v1/disputes
@@ -98,12 +154,12 @@ export const raiseDispute = async (req, res, next) => {
       participants: [
         {
           user: raisedBy,
-          role: raisedByRole,
+          role: normalizeRole(raisedByRole),
           joinedAt: new Date()
         },
         {
           user: raisedAgainst,
-          role: raisedByRole === 'client' ? 'fundi' : 'client',
+          role: normalizeRole(raisedByRole === 'client' ? 'fundi' : 'client'),
           joinedAt: new Date()
         }
       ],
@@ -125,7 +181,7 @@ export const raiseDispute = async (req, res, next) => {
 
     // Notify both parties and admins
     await notificationService.sendBulkNotifications(
-      [raisedAgainst, ...await this.getAdminUsers()],
+      [raisedAgainst, ...await getAdminUsers()],
       {
         title: 'New Dispute Raised',
         message: `A dispute has been raised for booking ${booking.bookingId}: ${title}`,
@@ -602,7 +658,7 @@ const executePenalties = async (dispute) => {
 };
 
 // Helper method to apply client penalty
-const applyClientPenalty = async (clientId, penalty, booking) => {
+const applyClientPenalty = async (clientId, penalty, _booking) => {
   const client = await Client.findOne({ user: clientId });
   
   switch (penalty.type) {
@@ -622,7 +678,7 @@ const applyClientPenalty = async (clientId, penalty, booking) => {
 };
 
 // Helper method to apply fundi penalty
-const applyFundiPenalty = async (fundiId, penalty, booking) => {
+const applyFundiPenalty = async (fundiId, penalty, _booking) => {
   const fundi = await Fundi.findOne({ user: fundiId });
   
   switch (penalty.type) {
@@ -637,13 +693,14 @@ const applyFundiPenalty = async (fundiId, penalty, booking) => {
       logger.info(`Fundi ${fundiId} account suspended due to dispute`);
       break;
       
-    case 'rating_penalty':
+    case 'rating_penalty': {
       // Apply rating penalty
       const currentRating = fundi.stats?.rating || 0;
       fundi.stats = fundi.stats || {};
       fundi.stats.rating = Math.max(1, currentRating - 1); // Reduce by 1 star, minimum 1
       await fundi.save();
       break;
+    }
   }
 };
 

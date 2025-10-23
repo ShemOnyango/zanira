@@ -16,8 +16,11 @@ export default function ProductManagement() {
 
   async function load() {
     try {
-      const { data } = await fetchProducts()
-      setProducts(data?.data?.products || [])
+      // useApi returns response.data (or axios response). Accept both shapes for robustness
+      const res = await fetchProducts()
+      // res might be axios response.data or the server payload
+      const productsList = res?.data?.products || res?.products || res?.data || []
+      setProducts(Array.isArray(productsList) ? productsList : [])
     } catch (err) {
       console.error('Failed to load products', err)
     }
@@ -26,7 +29,16 @@ export default function ProductManagement() {
   async function handleCreate(e) {
     e.preventDefault()
     try {
-      const { data } = await createProduct(form)
+      // build payload and omit empty shop to avoid server ObjectId cast errors
+      const payload = {
+        name: form.name,
+        description: form.description,
+        price: Number(form.price) || 0,
+        sku: form.sku
+      }
+      if (form.shop && form.shop !== '') payload.shop = form.shop
+
+      const { data } = await createProduct(payload)
       setProducts(prev => [data?.data?.product, ...prev])
       setForm({ name: '', price: 0, sku: '', shop: '' })
     } catch (err) {
@@ -62,14 +74,14 @@ export default function ProductManagement() {
         <LoadingSpinner />
       ) : (
         <div className="space-y-3">
-          {products.map(p => (
-            <div key={p._id} className="p-3 border rounded flex items-center justify-between">
+          {products.filter(Boolean).map((p) => (
+            <div key={p._id || p.id} className="p-3 border rounded flex items-center justify-between">
               <div>
-                <div className="font-medium">{p.name}</div>
-                <div className="text-sm text-gray-500">Price: KES {p.price} — SKU: {p.sku}</div>
+                <div className="font-medium">{p?.name || '(no name)'}</div>
+                <div className="text-sm text-gray-500">Price: KES {p?.price ?? '-'} — SKU: {p?.sku || '-'}</div>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => handleDelete(p._id)} disabled={deleting} className="px-3 py-1 bg-red-500 text-white rounded">Delete</button>
+                <button onClick={() => handleDelete(p._id || p.id)} disabled={deleting} className="px-3 py-1 bg-red-500 text-white rounded">Delete</button>
               </div>
             </div>
           ))}

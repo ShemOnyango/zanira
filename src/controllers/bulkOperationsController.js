@@ -137,11 +137,21 @@ export const bulkSendNotification = async (req, res, next) => {
     } else if (recipientIds && typeof recipientIds === 'string') {
       recipients = recipientIds.split(',').map(s => s.trim()).filter(Boolean);
     } else if (recipientType) {
-      const query = {};
-      if (recipientType !== 'all') {
-        query.role = recipientType;
+      // Resolve the requested recipientType into canonical role or treat as 'all'
+      const { resolveRecipientType } = await import('../utils/roleUtils.js');
+      const resolved = resolveRecipientType(recipientType);
+
+      let users = [];
+      if (!resolved) {
+        // 'all' or unknown -> select all users
+        users = await User.find({}).select('_id');
+      } else if (resolved === 'admin') {
+        // Admin-like groups should include admin and super_admin
+        users = await User.find({ role: { $in: ['admin', 'super_admin'] } }).select('_id');
+      } else {
+        users = await User.find({ role: resolved }).select('_id');
       }
-      const users = await User.find(query).select('_id');
+
       recipients = users.map(u => u._id);
     } else {
       return res.status(400).json({
@@ -157,16 +167,61 @@ export const bulkSendNotification = async (req, res, next) => {
 
     for (const recipientId of recipients) {
       try {
-        await Notification.create({
+        // Normalize fields to match Notification model enums
+        const recipientUser = await User.findById(recipientId).select('role');
+        // Use roleUtils to resolve recipientType consistently
+        const { resolveRecipientType, normalizeRole } = await import('../utils/roleUtils.js');
+        const resolvedRecipientType = resolveRecipientType(recipientType) || normalizeRole(recipientUser?.role);
+
+        // Map incoming notificationType to one of allowed enums (keep local mapping)
+        const typeMap = (t) => {
+          const allowedTypes = [
+            'booking_created', 'booking_confirmed', 'booking_cancelled', 'booking_completed',
+            'payment_received', 'payment_failed', 'verification_approved', 'verification_rejected',
+            'new_message', 'system_alert', 'promotional', 'security_alert'
+          ];
+          if (!t) return 'system_alert';
+          if (allowedTypes.includes(t)) return t;
+          if (t === 'system_announcement' || t === 'announcement') return 'system_alert';
+          return 'system_alert';
+        };
+
+        const resolvedNotificationType = typeMap(notificationType);
+
+        // Map action
+        const actionMap = (a) => {
+          const allowed = ['navigate', 'open_url', 'dismiss', 'reply'];
+          if (!a) return 'dismiss';
+          if (allowed.includes(a)) return a;
+          if (a === 'none') return 'dismiss';
+          return 'dismiss';
+        };
+
+        const resolvedAction = actionMap(action);
+
+        // Ensure title exists
+        const resolvedTitle = title && title.trim().length > 0 ? title : (message ? (message.length > 100 ? message.substring(0, 100) : message) : 'Notification');
+
+        const notification = await Notification.create({
           recipient: recipientId,
-          recipientType: recipientType || 'all',
-          title,
+          recipientType: resolvedRecipientType,
+          title: resolvedTitle,
           message,
-          notificationType: notificationType || 'system_announcement',
-          action: action || 'none',
+          notificationType: resolvedNotificationType,
+          action: resolvedAction,
           actionData: actionData || {},
           priority: 'normal'
         });
+
+        // Emit real-time event to recipient's personal room if socket service is available
+        try {
+          const socketService = req.app.get('socketService');
+          if (socketService && socketService.io) {
+            socketService.io.to(String(recipientId)).emit('notification:new', notification);
+          }
+        } catch (emitErr) {
+          logger.warn('Failed to emit notification:new for recipient', recipientId, emitErr.message);
+        }
         results.success.push(recipientId);
       } catch (error) {
         results.failed.push({ recipientId, reason: error.message });
@@ -199,6 +254,21 @@ export const bulkSendNotification = async (req, res, next) => {
         results
       }
     });
+
+    // Emit summary event to admin so frontend can show sent items/outbox immediately
+    try {
+      const socketService = req.app.get('socketService');
+      if (socketService && socketService.io) {
+        socketService.io.to(String(req.user._id)).emit('bulk:notification:sent', {
+          total: recipients.length,
+          successful: results.success.length,
+          failed: results.failed.length,
+          results
+        });
+      }
+    } catch (emitErr) {
+      logger.warn('Failed to emit bulk:notification:sent to admin', req.user._id, emitErr.message);
+    }
 
     logger.info(`Bulk notification sent: ${results.success.length}/${recipients.length} successful`);
   } catch (error) {
@@ -342,6 +412,21 @@ export const bulkVerifyFundis = async (req, res, next) => {
           message: `Your fundi profile has been ${status}. ${notes || ''}`,
           notificationType: 'verification_update'
         });
+
+        // Emit real-time notification for fundi
+        try {
+          const socketService = req.app.get('socketService');
+          if (socketService && socketService.io) {
+            socketService.io.to(String(fundi.user)).emit('notification:new', {
+              recipient: fundi.user,
+              title: `Verification ${status}`,
+              message: `Your fundi profile has been ${status}. ${notes || ''}`,
+              notificationType: 'verification_update'
+            });
+          }
+        } catch (emitErr) {
+          logger.warn('Failed to emit notification:new for fundi', fundi.user, emitErr.message);
+        }
 
         results.success.push(fundiId);
 
@@ -525,6 +610,7 @@ export const bulkExportData = async (req, res, next) => {
       message: 'Data exported successfully',
       data: {
         type: dataType,
+        model: modelName,
         count: data.length,
         records: data,
         exportedAt: new Date(),

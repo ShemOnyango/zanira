@@ -1,4 +1,4 @@
-import { body, validationResult, param, query } from 'express-validator';
+import { body, validationResult, param } from 'express-validator';
 import User from '../models/User.js';
 
 // Handle validation errors

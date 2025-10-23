@@ -1,5 +1,5 @@
 import Wallet from '../models/Wallet.js';
-import User from '../models/User.js';
+// import User from '../models/User.js';
 import AuditLog from '../models/AuditLog.js';
 import mpesaService from '../config/mpesa.js';
 import bcrypt from 'bcryptjs';

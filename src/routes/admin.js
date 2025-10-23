@@ -18,7 +18,7 @@ import {
   adminUpdateUserRole,
   getRecentActivities
 } from '../controllers/adminController.js';
-import { protect, authorize, hasPermission } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 import { validateObjectId } from '../middleware/validation.js';
 import priceNegotiationsRoutes from './priceNegotiations.js';
 

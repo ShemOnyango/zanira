@@ -11,7 +11,7 @@ import hpp from 'hpp';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
-import { Server } from 'socket.io';
+
 
 // (dotenv is loaded via the top-level side-effect import)
 
@@ -43,6 +43,7 @@ import priceNegotiationsRoutes from './src/routes/priceNegotiations.js';
 import materialReceiptRoutes from './src/routes/materialReceipts.js';
 import testimonialRoutes from './src/routes/testimonials.js';
 import productRoutes from './src/routes/products.js';
+import devRoutes from './src/routes/dev.js';
 
 // Import middleware
 import errorHandler from './src/middleware/errorHandler.js';
@@ -54,12 +55,22 @@ import { ipWhitelistMiddleware } from './src/middleware/ipWhitelist.js';
 
 // Import socket service
 import SocketService from './src/config/socket.js';
+import { setSocketService } from './src/services/socketAccessor.js';
 
 const app = express();
 const server = createServer(app);
 
 // Initialize Socket.io
 const io = new SocketService(server);
+
+// Expose raw Socket.IO server and the socket service instance on the Express app
+// so controllers can emit real-time events using req.app.get('io') or access
+// higher-level helpers via req.app.get('socketService').
+app.set('io', io.io);
+app.set('socketService', io);
+
+// Register socket service in accessor for services to use (preferred over global)
+setSocketService(io);
 
 // Security middleware
 app.use(helmet());
@@ -218,15 +229,20 @@ app.use('/api/v1/bidding', biddingRoutes);
 app.use('/api/v1/files', filesRoutes);
 app.use('/api/v1/reports', reportsRoutes);
 app.use('/api/v1/material-receipts', materialReceiptRoutes);
+// Development-only endpoints
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/api/v1/dev', devRoutes);
+}
 app.use('/api/v1/price-negotiations', priceNegotiationsRoutes);
 app.use('/api/v1/testimonials', testimonialRoutes);
 app.use('/api/v1/products', productRoutes);
+// (dev routes already mounted above in non-production)
 
 // Serve uploaded files statically (if needed)
 app.use('/api/v1/uploads', express.static('uploads'));
 
 // Handle undefined routes
-app.all('*', (req, res, next) => {
+app.all('*', (req, res, _next) => {
   res.status(404).json({
     success: false,
     error: `Route ${req.originalUrl} not found`

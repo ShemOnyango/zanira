@@ -68,9 +68,28 @@ export default function BookingDetails() {
         }
 
         if (bookingData) {
-          setBooking(bookingData)
-          if (bookingData.chatId) {
-            loadMessages(bookingData.chatId)
+          // Normalize chat id: some responses provide `chatId`, others embed `chatThread` object
+          const normalizedChatId = bookingData.chatId || bookingData.chatThread?._id || bookingData.chatThread || null
+
+          // Normalize participant shapes: some endpoints return { client: { user: {...} } } or { fundi: { user: {...} } }
+          const normalizeParticipant = (obj) => {
+            if (!obj) return null
+            // if object has a nested 'user' field, return that user object for UI convenience
+            if (obj.user) return obj.user
+            return obj
+          }
+
+          const normalizedBooking = {
+            ...bookingData,
+            chatId: normalizedChatId,
+            client: normalizeParticipant(bookingData.client),
+            fundi: normalizeParticipant(bookingData.fundi),
+            assignedFundi: normalizeParticipant(bookingData.assignedFundi),
+          }
+
+          setBooking(normalizedBooking)
+          if (normalizedChatId) {
+            loadMessages(normalizedChatId)
           }
         }
       } catch (error) {
@@ -138,11 +157,21 @@ export default function BookingDetails() {
     if (!newMessage.trim() || !booking?.chatId) return
 
     try {
-      await sendMessageApi(booking.chatId, { 
+      const resp = await sendMessageApi(booking.chatId, { 
         message: newMessage,
         type: 'text'
       })
+
+      // Clear input
       setNewMessage('')
+
+      // Refresh messages list to include the new message
+      await loadMessages(booking.chatId)
+
+      // Emit socket event for real-time update (if socket connected)
+      if (socket && resp && resp.data && resp.data.message) {
+        socket.emit('new_message', resp.data.message)
+      }
     } catch (error) {
       console.error('Failed to send message:', error)
     }

@@ -2,6 +2,7 @@ import express from 'express';
 import {
   getServiceCategories,
   getServiceCategory,
+  getFundisForService,
   createServiceCategory,
   updateServiceCategory,
   deleteServiceCategory,
@@ -11,16 +12,20 @@ import {
   removeFundiService,
   searchServices
 } from '../controllers/serviceController.js';
-import { protect, authorize, hasPermission } from '../middleware/auth.js';
+import { protect, authorize } from '../middleware/auth.js';
 import { validateObjectId } from '../middleware/validation.js';
 
 const router = express.Router();
 
 // Public routes
+// Allow client to fetch list of services at GET /api/v1/services
+router.get('/', getServiceCategories);
 router.get('/categories', getServiceCategories);
 router.get('/categories/:id', validateObjectId, getServiceCategory);
 router.get('/search', searchServices);
 router.get('/fundi/:fundiId', validateObjectId, getFundiServices);
+// Get fundis for a specific service
+router.get('/:id/fundis', validateObjectId, getFundisForService);
 
 // Protected routes
 router.use(protect);

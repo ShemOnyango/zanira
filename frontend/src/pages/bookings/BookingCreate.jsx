@@ -13,7 +13,7 @@ import {
   X
 } from 'lucide-react'
 import { useApi } from '../../hooks/useApi'
-import { serviceAPI, bookingAPI, matchingAPI } from '../../lib/api'
+import { serviceAPI, bookingAPI } from '../../lib/api'
 import FormInput from '../../components/forms/FormInput'
 import FormSelect from '../../components/forms/FormSelect'
 import FormTextarea from '../../components/forms/FormTextarea'
@@ -26,9 +26,6 @@ export default function BookingCreate() {
   const navigate = useNavigate()
   const [step, setStep] = useState(1)
   const [services, setServices] = useState([])
-  const [matchedFundis, setMatchedFundis] = useState([])
-  const [showFundiPreview, setShowFundiPreview] = useState(false)
-  const [selectedFundi, setSelectedFundi] = useState(null)
   const [uploadedImages, setUploadedImages] = useState([])
 
   const [formData, setFormData] = useState({
@@ -45,7 +42,7 @@ export default function BookingCreate() {
     specialRequirements: '',
     materials: [''],
     urgency: 'normal',
-    assignedFundiId: ''
+    // fundiId removed: bookings are posted without client-side fundi selection
   })
 
   // API hooks
@@ -53,7 +50,7 @@ export default function BookingCreate() {
   const { execute: createBooking, loading: bookingLoading } = useApi(bookingAPI.create, { 
     successMessage: 'Booking created successfully!' 
   })
-  const { execute: findFundis, loading: matchingLoading } = useApi(matchingAPI.findFundis, { showToast: false })
+  // matching API removed from client side; fundi assignment happens via admin
 
   // Load services on mount
   useEffect(() => {
@@ -158,64 +155,7 @@ export default function BookingCreate() {
     setUploadedImages(newImages)
   }
 
-  // Find matching fundis
-  const handleFindFundis = async () => {
-    if (!formData.serviceId || !formData.location.county) {
-      return
-    }
-    try {
-      // Try service search endpoint first
-      const resp = await serviceAPI.searchServices(formData.serviceId)
-
-      // Normalize response to array
-      let results = []
-      if (resp) {
-        if (Array.isArray(resp)) results = resp
-        else if (resp.data && Array.isArray(resp.data)) results = resp.data
-        else if (resp.data && Array.isArray(resp.data.results)) results = resp.data.results
-        else if (Array.isArray(resp.results)) results = resp.results
-        else {
-          const maybeArray = Object.values(resp).find(v => Array.isArray(v))
-          if (Array.isArray(maybeArray)) results = maybeArray
-        }
-      }
-
-      // If search returned nothing, fallback to matching API
-      if (!results || results.length === 0) {
-        const fallback = await findFundis({ serviceId: formData.serviceId, location: formData.location })
-        if (fallback && Array.isArray(fallback)) results = fallback
-      }
-
-      // Filter by county if available
-      const filteredFundis = results.filter(fundi => fundi.location?.county === formData.location.county)
-
-      if (filteredFundis.length > 0) {
-        setMatchedFundis(filteredFundis)
-        setShowFundiPreview(true)
-      } else {
-        // No matches — inform user and optionally proceed
-        const { default: toast } = await import('react-hot-toast')
-        toast.error('No matching fundis found in your area. You can continue to review and post your booking.')
-        setStep(4)
-      }
-    } catch (error) {
-      console.error('Failed to find fundis:', error)
-      const { default: toast } = await import('react-hot-toast')
-      toast.error('Fundi matching temporarily unavailable')
-      // Optionally skip to next step so user can still complete booking
-      setStep(4)
-    }
-  }
-
-  // Select a fundi
-  const handleSelectFundi = (fundi) => {
-    setSelectedFundi(fundi)
-    setFormData(prev => ({
-      ...prev,
-      assignedFundiId: fundi._id
-    }))
-    setShowFundiPreview(false)
-  }
+  // Client no longer selects fundis; admin assigns fundis later
 
   // Submit booking
   const handleSubmit = async () => {
@@ -223,17 +163,17 @@ export default function BookingCreate() {
       // Prepare form data with images
       const bookingData = new FormData()
       
-      // Append basic fields
+      // Append basic fields (skip empty strings)
       Object.keys(formData).forEach(key => {
         if (key === 'location') {
           bookingData.append(key, JSON.stringify(formData[key]))
         } else if (key === 'materials') {
           formData.materials.forEach((material, index) => {
-            if (material.trim()) {
+            if (material && material.trim()) {
               bookingData.append(`materials[${index}]`, material)
             }
           })
-        } else if (formData[key]) {
+        } else if (formData[key] !== undefined && formData[key] !== '' && formData[key] !== null) {
           bookingData.append(key, formData[key])
         }
       })
@@ -245,7 +185,10 @@ export default function BookingCreate() {
 
       const data = await createBooking(bookingData)
       if (data) {
-        navigate(`/bookings/${data._id}`)
+        // Normalize the response to find the created booking id
+        const bookingObj = data?.data?.booking || data?.booking || data
+        const bookingId = bookingObj?._id || bookingObj?.id || bookingObj
+        if (bookingId) navigate(`/bookings/${bookingId}`)
       }
     } catch (error) {
       console.error('Booking creation error:', error)
@@ -371,13 +314,12 @@ export default function BookingCreate() {
                   required
                 />
                 
-                <FormSelect
+                <FormInput
                   label="Town"
                   value={formData.location.town}
                   onChange={(e) => handleLocationChange('town', e.target.value)}
-                  options={getTownsForCounty().map(town => ({ value: town, label: town }))}
+                  placeholder="Enter town or locality"
                   required
-                  disabled={!formData.location.county}
                 />
               </div>
 
@@ -557,13 +499,6 @@ export default function BookingCreate() {
                 </button>
                 <div className="space-x-4">
                   <button
-                    onClick={handleFindFundis}
-                    disabled={!formData.serviceId || !formData.location.county}
-                    className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Find Matching Fundis
-                  </button>
-                  <button
                     onClick={() => setStep(4)}
                     className="bg-teal-500 text-white px-8 py-3 rounded-lg hover:bg-teal-600 transition-colors"
                   >
@@ -611,26 +546,7 @@ export default function BookingCreate() {
                   </div>
                 </div>
 
-                {selectedFundi && (
-                  <div className="border-t pt-4">
-                    <h3 className="font-semibold text-gray-900 mb-2">Selected Fundi</h3>
-                    <div className="flex items-center space-x-3 bg-white rounded-lg p-3">
-                      <img
-                        src={selectedFundi.profilePhoto || '/default-avatar.png'}
-                        alt={selectedFundi.firstName}
-                        className="w-12 h-12 rounded-full object-cover"
-                      />
-                      <div>
-                        <p className="font-medium text-gray-900">
-                          {selectedFundi.firstName} {selectedFundi.lastName}
-                        </p>
-                        <p className="text-gray-600 text-sm">
-                          Rating: {selectedFundi.rating || 'No ratings yet'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {/* Client-side fundi review removed; admin assigns fundi later */}
 
                 {formData.specialRequirements && (
                   <div className="border-t pt-4">
@@ -661,67 +577,7 @@ export default function BookingCreate() {
         </div>
       </div>
 
-      {/* Fundi Matching Modal */}
-      <Modal
-        isOpen={showFundiPreview}
-        onClose={() => setShowFundiPreview(false)}
-        title="Available Fundis"
-        size="lg"
-      >
-        <div className="space-y-4">
-          {matchingLoading ? (
-            <div className="flex justify-center py-8">
-              <LoadingSpinner size="md" />
-            </div>
-          ) : matchedFundis.length > 0 ? (
-            matchedFundis.map((fundi) => (
-              <div
-                key={fundi._id}
-                className={`border rounded-lg p-4 cursor-pointer transition-all ${
-                  selectedFundi?._id === fundi._id
-                    ? 'border-teal-500 bg-teal-50'
-                    : 'border-gray-200 hover:border-teal-300'
-                }`}
-                onClick={() => handleSelectFundi(fundi)}
-              >
-                <div className="flex items-center space-x-4">
-                  <img
-                    src={fundi.profilePhoto || '/default-avatar.png'}
-                    alt={fundi.firstName}
-                    className="w-16 h-16 rounded-full object-cover"
-                  />
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-gray-900">
-                      {fundi.firstName} {fundi.lastName}
-                    </h3>
-                    <p className="text-gray-600 text-sm">{fundi.skills?.join(', ')}</p>
-                    <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
-                      <span>⭐ {fundi.rating || 'No ratings'}</span>
-                      <span>•</span>
-                      <span>{fundi.completedJobs || 0} jobs completed</span>
-                      <span>•</span>
-                      <span>{fundi.location?.town}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-lg font-semibold text-teal-600">
-                      KES {fundi.hourlyRate?.toLocaleString()}/hr
-                    </div>
-                    <button className="mt-2 bg-teal-500 text-white px-4 py-1 rounded text-sm hover:bg-teal-600 transition-colors">
-                      Select
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="text-center py-8 text-gray-500">
-              <p>No fundis available for this service in your area.</p>
-              <p className="text-sm mt-2">Try adjusting your location or service type.</p>
-            </div>
-          )}
-        </div>
-      </Modal>
+      {/* Fundi Matching Modal removed from client side */}
     </div>
   )
 }

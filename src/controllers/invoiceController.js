@@ -2,9 +2,9 @@ import Invoice from '../models/Invoice.js';
 import Booking from '../models/Booking.js';
 import User from '../models/User.js';
 import Fundi from '../models/Fundi.js';
-import Payment from '../models/Payment.js';
+// Payment model not used in this controller
 import Dispute from '../models/Dispute.js';
-import { sendEmail, emailTemplates } from '../utils/emailUtils.js';
+import { sendEmail } from '../utils/emailUtils.js';
 import notificationService from '../services/notificationService.js';
 import logger from '../middleware/logger.js';
 
@@ -179,9 +179,7 @@ export const generatePenaltyInvoice = async (req, res, next) => {
 
     // Get recipient details
     const recipient = await User.findById(penaltyRecipient);
-    const recipientDetails = recipientRole === 'fundi' ? 
-      await Fundi.findOne({ user: penaltyRecipient }).populate('user') : 
-      null;
+    // recipientDetails not required here; recipient lookup above provides needed fields
 
     // Create penalty invoice
     const invoice = await Invoice.create({
@@ -669,7 +667,7 @@ export const getUserInvoices = async (req, res, next) => {
 };
 
 // Helper method to generate invoice email HTML
-generateInvoiceEmail = (invoice, pdfUrl, customMessage) => {
+const generateInvoiceEmail = (invoice, pdfUrl, customMessage) => {
   return `
     <!DOCTYPE html>
     <html>
@@ -718,15 +716,6 @@ generateInvoiceEmail = (invoice, pdfUrl, customMessage) => {
     </html>
   `;
 };
+// Export helper for tests or other modules if needed
+export { generateInvoiceEmail };
 
-export {
-  generateInvoice,
-  generatePenaltyInvoice,
-  getInvoices,
-  getInvoice,
-  updateInvoiceStatus,
-  sendInvoice,
-  recordPayment,
-  getInvoiceStats,
-  getUserInvoices
-};

@@ -25,6 +25,8 @@ router.get('/', getUserChats);
 // Admin scoped conversations listing
 router.get('/admin/conversations', authorize('admin', 'super_admin'), getAdminConversations);
 router.get('/:id', validateObjectId, getChat);
+// Fetch messages for a chat (frontend expects GET /chats/:id/messages)
+router.get('/:id/messages', validateObjectId, getChatHistory);
 router.get('/:id/history', validateObjectId, getChatHistory);
 router.post('/', createChat);
 router.post('/booking/:bookingId', validateObjectId, getOrCreateBookingChat);

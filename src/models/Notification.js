@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { normalizeRole } from '../utils/roleUtils.js';
 
 const notificationSchema = new mongoose.Schema({
   // Recipient Information
@@ -9,8 +10,16 @@ const notificationSchema = new mongoose.Schema({
   },
   recipientType: {
     type: String,
-    enum: ['client', 'fundi', 'admin', 'shop_owner'],
-    required: true
+    // Allow legacy values temporarily to avoid validation failures; we normalize
+    // them in a pre-validate hook below.
+    enum: ['client', 'fundi', 'admin', 'shop_owner', 'super_admin', 'system', 'secretary'],
+    required: true,
+    set: function(val) {
+      if (!val) return null;
+      const v = String(val).toLowerCase();
+      if (v === 'all' || v === 'everyone') return null;
+      return normalizeRole(v);
+    }
   },
 
   // Notification Content
@@ -139,6 +148,20 @@ notificationSchema.virtual('canSend').get(function() {
   return this.status === 'pending' && 
          (!this.scheduledFor || this.scheduledFor <= new Date()) &&
          !this.isExpired;
+});
+
+// Pre-validate: normalize recipientType so legacy values like 'super_admin' are
+// converted to canonical enums before Mongoose validation.
+notificationSchema.pre('validate', function(next) {
+  if (this.recipientType) {
+    const rt = String(this.recipientType).toLowerCase();
+    if (rt === 'all' || rt === 'everyone') {
+      this.recipientType = null;
+    } else {
+      this.recipientType = normalizeRole(rt);
+    }
+  }
+  next();
 });
 
 // Pre-save middleware to set default expiry

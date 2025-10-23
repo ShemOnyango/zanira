@@ -1,0 +1,7 @@
+﻿{
+    "email":  "test_booking_run@local.test",
+    "password":  "Password123!",
+    "role":  "client",
+    "firstName":  "Test",
+    "lastName":  "User"
+}

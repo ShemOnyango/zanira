@@ -1,14 +1,16 @@
 // frontend/src/lib/utils.js
-import { format, formatDistanceToNow, parseISO } from 'date-fns'
+import { format, formatDistanceToNow } from 'date-fns';
 
 // Format currency (Kenyan Shillings)
 export const formatCurrency = (amount) => {
+  const value = (typeof amount === 'number' && Number.isFinite(amount)) ? amount : Number(amount);
+  const safe = Number.isFinite(value) ? value : 0;
   return new Intl.NumberFormat('en-KE', {
     style: 'currency',
     currency: 'KES',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).format(amount)
+  }).format(safe)
 }
 
 // Format date

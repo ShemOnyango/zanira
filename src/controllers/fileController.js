@@ -2,7 +2,7 @@ import cloudinary from '../config/cloudinary.js';
 import Fundi from '../models/Fundi.js';
 import User from '../models/User.js';
 import Verification from '../models/Verification.js';
-import { protect, authorize } from '../middleware/auth.js';
+//import { protect, authorize } from '../middleware/auth.js';
 import logger from '../middleware/logger.js';
 
 // @desc    Upload profile photo
@@ -207,17 +207,18 @@ export const deleteFile = async (req, res, next) => {
     let hasPermission = false;
     let updateQuery = {};
 
-    // Verify ownership and build update query
+    // Verify ownership and build update query - fix case blocks
     switch (documentType) {
-      case 'profile_photo':
+      case 'profile_photo': {
         const user = await User.findById(req.user._id);
         if (user.profilePhoto && user.profilePhoto.includes(publicId)) {
           hasPermission = true;
           updateQuery = { $unset: { profilePhoto: 1 } };
         }
         break;
+      }
 
-      case 'verification_document':
+      case 'verification_document': {
         const verification = await Verification.findOne({
           applicant: req.user._id
         });
@@ -235,8 +236,9 @@ export const deleteFile = async (req, res, next) => {
           }
         }
         break;
+      }
 
-      case 'portfolio_item':
+      case 'portfolio_item': {
         const fundi = await Fundi.findOne({ user: req.user._id });
         if (fundi && itemId) {
           const portfolioItem = fundi.portfolio.id(itemId);
@@ -254,13 +256,16 @@ export const deleteFile = async (req, res, next) => {
           }
         }
         break;
+      }
 
-      default:
+      default: {
         return res.status(400).json({
           success: false,
           error: 'Invalid document type'
         });
+      }
     }
+
 
     if (!hasPermission && req.user.role !== 'admin') {
       return res.status(403).json({
@@ -281,19 +286,22 @@ export const deleteFile = async (req, res, next) => {
 
     // Update database
     switch (documentType) {
-      case 'profile_photo':
+      case 'profile_photo': {
         await User.findByIdAndUpdate(req.user._id, updateQuery);
         break;
-      case 'verification_document':
+      }
+      case 'verification_document': {
         await Verification.findOneAndUpdate(
           { applicant: req.user._id },
           updateQuery
         );
         break;
-      case 'portfolio_item':
+      }
+      case 'portfolio_item': {
         const fundi = await Fundi.findOne({ user: req.user._id });
-        await fundi.save();
+        if (fundi) await fundi.save();
         break;
+      }
     }
 
     res.status(200).json({

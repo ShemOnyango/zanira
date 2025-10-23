@@ -1,6 +1,8 @@
 // frontend/src/pages/admin/BookingManagement.jsx
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Search, Filter, Eye, Calendar, MapPin, Clock, DollarSign } from 'lucide-react'
+import { Users, CheckCircle, X } from 'lucide-react'
 import { useApi } from '../../hooks/useApi'
 import { bookingAPI } from '../../lib/api'
 import LoadingSpinner from '../../components/common/LoadingSpinner'
@@ -11,9 +13,17 @@ const BookingManagement = () => {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
+  const [showMatchingFundis, setShowMatchingFundis] = useState(false)
+  const [selectedBooking, setSelectedBooking] = useState(null)
+  const [matchingFundis, setMatchingFundis] = useState([])
+  const [assigningFundi, setAssigningFundi] = useState(false)
+  const navigate = useNavigate()
 
   const { execute: fetchBookings } = useApi(bookingAPI.getAll, { showToast: false })
   const { execute: updateBookingStatus } = useApi(bookingAPI.updateStatus, { showToast: true })
+  const { execute: getMatchingFundis } = useApi(bookingAPI.getMatchingFundis, { showToast: false })
+  const { execute: assignFundi } = useApi(bookingAPI.assignFundi, { showToast: true, successMessage: 'Fundi assigned successfully!' })
+  const { execute: pushToFundis } = useApi(bookingAPI.pushToFundis, { showToast: true, successMessage: 'Job pushed to fundis successfully' })
 
   useEffect(() => {
     loadBookings()
@@ -24,8 +34,21 @@ const BookingManagement = () => {
       setLoading(true)
       const bookingsData = await fetchBookings()
       if (bookingsData) {
-        const payload = bookingsData.data ?? bookingsData ?? []
-        setBookings(Array.isArray(payload) ? payload : [])
+        // API may return either an array (legacy) or an object { data: { bookings, pagination } }
+        // Normalize to an array of booking objects for the table.
+        let payload = []
+        // Case A: axios wrapper returned { data: { bookings, pagination } }
+        if (bookingsData.data && bookingsData.data.bookings) {
+          payload = bookingsData.data.bookings
+        } else if (bookingsData.data && Array.isArray(bookingsData.data)) {
+          // Case B: axios wrapper returned { data: [ ... ] }
+          payload = bookingsData.data
+        } else if (Array.isArray(bookingsData)) {
+          // Case C: direct array
+          payload = bookingsData
+        }
+
+        setBookings(payload)
       }
     } catch (error) {
       console.error('Failed to load bookings:', error)
@@ -40,6 +63,74 @@ const BookingManagement = () => {
       loadBookings()
     } catch (error) {
       console.error('Failed to update booking status:', error)
+    }
+  }
+
+  const handleFindMatchingFundis = async (booking) => {
+    try {
+      setSelectedBooking(booking)
+      setMatchingFundis([])
+      setShowMatchingFundis(true)
+      // show a loading indicator by setting matchingFundis to null
+      setMatchingFundis(null)
+
+      let data = null
+      try {
+        data = await getMatchingFundis(booking._id)
+      } catch (err) {
+        console.error('matching-fundis API failed, will try service fundis fallback', err)
+      }
+
+      let found = []
+      if (data && data.data && Array.isArray(data.data.matchingFundis)) {
+        found = data.data.matchingFundis
+      }
+
+      // Fallback: fetch fundis for the service via service API if none found
+      if (found.length === 0) {
+        try {
+          // dynamic import to avoid circular deps
+          const { serviceAPI } = await import('../../lib/api')
+          // serviceAPI.getFundis expects a serviceId (string). booking.service may be
+          // an object (populated) or an id. Normalize to id to avoid calling /services/[object Object]/fundis
+          const serviceId = booking?.service?._id || booking?.service
+          if (!serviceId) {
+            console.warn('No service id available for fallback getFundis', { bookingId: booking?._id, booking })
+          } else {
+            const svcResp = await serviceAPI.getFundis(serviceId)
+            if (svcResp && svcResp.data) found = svcResp.data
+          }
+        } catch (e) {
+          console.error('Service fundis fallback failed', e)
+        }
+      }
+
+      setMatchingFundis(found)
+    } catch (error) {
+      console.error('Failed to find matching fundis:', error)
+    }
+  }
+
+  const handleAssignFundi = async (fundi) => {
+    try {
+      setAssigningFundi(true)
+      const agreedPrice = prompt(`Enter agreed price for ${fundi.user.firstName}:`)
+      if (!agreedPrice || isNaN(agreedPrice)) {
+        alert('Please enter a valid price')
+        return
+      }
+
+      await assignFundi(selectedBooking._id, {
+        fundiId: fundi._id,
+        agreedPrice: parseFloat(agreedPrice)
+      })
+
+      setShowMatchingFundis(false)
+      loadBookings()
+    } catch (error) {
+      console.error('Failed to assign fundi:', error)
+    } finally {
+      setAssigningFundi(false)
     }
   }
 
@@ -158,6 +249,71 @@ const BookingManagement = () => {
           </select>
         </div>
       </div>
+
+      {/* Matching Fundis Modal */}
+      {showMatchingFundis && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Matching Fundis for Booking #{(selectedBooking && selectedBooking._id) ? selectedBooking._id.slice(-6).toUpperCase() : ''}</h3>
+              <button onClick={() => setShowMatchingFundis(false)} className="text-gray-500 hover:text-gray-700">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              {matchingFundis === null ? (
+                <div className="flex flex-col items-center py-8">
+                  <LoadingSpinner size="lg" />
+                  <p className="mt-3 text-sm text-gray-600">Searching for fundis in the area...</p>
+                </div>
+              ) : Array.isArray(matchingFundis) && matchingFundis.length > 0 ? (
+                matchingFundis.map((fundi) => (
+                  <div key={fundi._id} className="border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <img
+                          src={fundi.user.profilePhoto || '/default-avatar.png'}
+                          alt={fundi.user.firstName}
+                          className="w-12 h-12 rounded-full"
+                        />
+                        <div>
+                          <h4 className="font-semibold">
+                            {fundi.user.firstName} {fundi.user.lastName}
+                          </h4>
+                          <p className="text-sm text-gray-600">
+                            Match Score: <span className="font-medium">{fundi.matchScore}%</span>
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            Rating: ⭐ {fundi.rating || 'No ratings'} • {fundi.stats?.completedJobs || 0} jobs
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleAssignFundi(fundi)}
+                        disabled={assigningFundi}
+                        className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 disabled:bg-gray-300 transition-colors flex items-center space-x-2"
+                      >
+                        {assigningFundi ? (
+                          <LoadingSpinner size="sm" />
+                        ) : (
+                          <CheckCircle size={16} />
+                        )}
+                        <span>Assign</span>
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <Users size={48} className="mx-auto mb-4 text-gray-300" />
+                  <p>No matching fundis found for this booking.</p>
+                  <p className="text-sm">Try adjusting the service type or location criteria.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Booking Stats */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
@@ -285,11 +441,24 @@ const BookingManagement = () => {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center space-x-2">
-                      <button className="text-blue-500 hover:text-blue-700">
+                      <button 
+                        onClick={() => handleFindMatchingFundis(booking)}
+                        className="text-blue-500 hover:text-blue-700"
+                        title="Find Matching Fundis"
+                      >
+                        <Users size={16} />
+                      </button>
+                      <button className="text-blue-500 hover:text-blue-700" onClick={() => navigate(`/bookings/${booking._id}`)} title="View booking details">
                         <Eye size={16} />
                       </button>
-                      <button className="text-green-500 hover:text-green-700">
-                        <Calendar size={16} />
+                      <button className="text-teal-600 hover:text-teal-800 ml-2" onClick={async () => {
+                        try {
+                          await pushToFundis(booking._id)
+                        } catch (err) {
+                          console.error('Push to fundis failed', err)
+                        }
+                      }} title="Push to Fundis">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14m7-7H5" /></svg>
                       </button>
                     </div>
                   </td>

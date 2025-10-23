@@ -90,15 +90,26 @@ export default function Register() {
     const { data } = await authAPI.register(registerData)
       console.debug('Register response:', data)
       setAuth(data.user, data.token, data.refreshToken)
-      // Ensure we have a full user profile
+      // Fetch full profile to get shopProfile when role=shop_owner
       try {
-        const { data: meData } = await (await import('../../lib/api')).authAPI.getMe()
-        if (meData?.user) {
-          useAuthStore.getState().setAuth(meData.user, data.token, data.refreshToken)
+        const { authAPI } = await import('../../lib/api')
+        const { data: meData } = await authAPI.getMe()
+        const meUser = meData?.data?.user || null
+        if (meUser) {
+          useAuthStore.getState().setAuth(meUser, data.token, data.refreshToken)
+
+          if (meUser.role === 'shop_owner' && !meUser.shopProfile) {
+            // If frontend provided a `next` param, honor it; otherwise go to create
+            const next = searchParams.get('next')
+            toast.success('Account created — please finish your shop details')
+            navigate(next || '/shops/create')
+            return
+          }
         }
       } catch (err) {
         console.debug('Failed to fetch /auth/me after register:', err)
       }
+
       toast.success('Account created successfully!')
       navigate('/dashboard')
     } catch (error) {

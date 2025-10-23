@@ -1,6 +1,6 @@
 import Subscription from '../models/Subscription.js';
-import User from '../models/User.js';
-import Payment from '../models/Payment.js';
+//import User from '../models/User.js';
+//import Payment from '../models/Payment.js';
 import AuditLog from '../models/AuditLog.js';
 import mpesaService from '../config/mpesa.js';
 import logger from '../middleware/logger.js';
@@ -169,8 +169,7 @@ export const createSubscription = async (req, res, next) => {
     }
 
     const now = new Date();
-    const trialDays = 14;
-    const billingDays = billingCycle === 'monthly' ? 30 : billingCycle === 'quarterly' ? 90 : 365;
+  const trialDays = 14;
 
     const subscription = await Subscription.create({
       user: userId,

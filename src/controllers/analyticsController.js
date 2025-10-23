@@ -2,11 +2,11 @@ import Booking from '../models/Booking.js';
 import Payment from '../models/Payment.js';
 import User from '../models/User.js';
 import Fundi from '../models/Fundi.js';
-import Client from '../models/Client.js';
-import ServiceCategory from '../models/ServiceCategory.js';
+// import Client from '../models/Client.js';
+// import ServiceCategory from '../models/ServiceCategory.js';
 import Verification from '../models/Verification.js'; // Added missing import
-import { protect, authorize } from '../middleware/auth.js';
-import logger from '../middleware/logger.js';
+// import { protect, authorize } from '../middleware/auth.js';
+// import logger from '../middleware/logger.js';
 
 // Helper methods - moved to top and fixed syntax
 function getDateRanges(period) {
@@ -87,7 +87,7 @@ async function getTotalRevenue(period) {
   return result[0] || { total: 0, platformFee: 0 };
 }
 
-async function getUserAnalytics(currentPeriod, previousPeriod, compare) {
+async function getUserAnalytics(currentPeriod, _previousPeriod, _compare) {
   const userGrowth = await User.aggregate([
     {
       $match: {
@@ -116,7 +116,7 @@ async function getUserAnalytics(currentPeriod, previousPeriod, compare) {
   };
 }
 
-async function calculateUserRetention(period) {
+async function calculateUserRetention(_period) {
   return {
     day7: 0.65,
     day30: 0.45,
@@ -124,7 +124,7 @@ async function calculateUserRetention(period) {
   };
 }
 
-async function getFinancialAnalytics(currentPeriod, previousPeriod, compare) {
+async function getFinancialAnalytics(currentPeriod, _previousPeriod, _compare) {
   const revenueByDay = await Payment.aggregate([
     {
       $match: {
@@ -149,7 +149,7 @@ async function getFinancialAnalytics(currentPeriod, previousPeriod, compare) {
   return { revenueByDay };
 }
 
-async function getServiceAnalytics(currentPeriod, previousPeriod, compare) {
+async function getServiceAnalytics(currentPeriod, _previousPeriod, _compare) {
   const popularServices = await Booking.aggregate([
     {
       $match: {

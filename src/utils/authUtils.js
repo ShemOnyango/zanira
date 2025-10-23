@@ -100,7 +100,7 @@ export const validatePasswordStrength = (password) => {
   const hasUpperCase = /[A-Z]/.test(password);
   const hasLowerCase = /[a-z]/.test(password);
   const hasNumbers = /\d/.test(password);
-  const hasSpecialChar = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
+  const hasSpecialChar = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password);
 
   return {
     isValid: password.length >= minLength && hasUpperCase && hasLowerCase && hasNumbers && hasSpecialChar,
@@ -120,10 +120,12 @@ export const generateSessionId = () => {
 };
 
 // Sanitize user data for response
+// Sanitize user data for response
 export const sanitizeUser = (user) => {
   const userObj = user.toObject ? user.toObject() : user;
   
   // Remove sensitive fields
+  // eslint-disable-next-line no-unused-vars
   const { password, passwordChangedAt, passwordResetToken, passwordResetExpires, twoFactorSecret, ...sanitized } = userObj;
   
   return sanitized;

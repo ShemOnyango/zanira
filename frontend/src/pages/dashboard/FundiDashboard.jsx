@@ -15,6 +15,7 @@ import {
   Users
 } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
+import { useSocket } from '../../contexts/SocketContext'
 import { useApi } from '../../hooks/useApi'
 import { analyticsAPI, bookingAPI, walletAPI } from '../../lib/api'
 import LoadingSpinner from '../../components/common/LoadingSpinner'
@@ -23,6 +24,7 @@ import { formatCurrency, formatDate, formatRelativeTime } from '../../lib/utils'
 
 export default function FundiDashboard() {
   const { user } = useAuthStore()
+  const socket = useSocket()
   const [stats, setStats] = useState(null)
   const [availableJobs, setAvailableJobs] = useState([])
   const [activeBookings, setActiveBookings] = useState([])
@@ -41,38 +43,126 @@ export default function FundiDashboard() {
     loadDashboardData()
   }, [])
 
+  // Listen for real-time notifications (e.g. job_pushed) and refresh available jobs
+  useEffect(() => {
+    if (!socket) return
+
+    const handleNewNotification = (notification) => {
+      try {
+        console.log('Received notification:', notification)
+        if (notification && (
+          notification.notificationType === 'job_available' || 
+          notification.notificationType === 'job_pushed' ||
+          notification.type === 'job_available' ||
+          notification.notificationType === 'job_assigned'
+        )) {
+          console.log('Job available notification received, refreshing dashboard...')
+          loadDashboardData()
+        }
+      } catch (e) {
+        console.error('Error handling notification:', e)
+      }
+    }
+
+    const handleBookingUpdate = (data) => {
+      try {
+        if (data && data.bookingId) {
+          console.log('Booking update received:', data)
+          loadDashboardData()
+        }
+      } catch (e) {
+        console.error('Error handling booking update:', e)
+      }
+    }
+
+    socket.on('notification', handleNewNotification)
+    socket.on('notification:new', handleNewNotification)
+    socket.on('booking:updated', handleBookingUpdate)
+    socket.on('job:available', handleNewNotification)
+
+    return () => {
+      socket.off('notification', handleNewNotification)
+      socket.off('notification:new', handleNewNotification)
+      socket.off('booking:updated', handleBookingUpdate)
+      socket.off('job:available', handleNewNotification)
+    }
+  }, [socket])
+
   const loadDashboardData = async () => {
     try {
-      setLoading(true)
+      setLoading(true);
+      setError(null);
       
-      // Fetch data in parallel
-      const [statsData, jobsData, bookingsData, walletData] = await Promise.all([
+      // Fetch data in parallel with better error handling
+      const [statsData, jobsData, bookingsData, walletData] = await Promise.allSettled([
         fetchStats(),
-        fetchAvailableJobs({ status: 'pending', limit: 3 }),
-        fetchActiveBookings({ status: ['confirmed', 'in_progress'], limit: 5 }),
+        fetchAvailableJobs({ 
+          status: 'pending', 
+          limit: 5, // Increased limit
+          available: true 
+        }),
+        fetchActiveBookings({ 
+          status: ['confirmed', 'in_progress'], 
+          limit: 5 
+        }),
         fetchWalletBalance()
-      ])
+      ]);
 
-      // API helpers return response.data (the axios response body). Normalize shapes:
-      const normalizedStats = statsData?.data ?? statsData ?? null
-      const normalizedJobs = jobsData?.data?.bookings ?? jobsData?.bookings ?? jobsData ?? []
-      const normalizedBookings = bookingsData?.data?.bookings ?? bookingsData?.bookings ?? bookingsData ?? []
-      const normalizedWalletBalance =
-        walletData?.data?.wallet?.balance ?? walletData?.wallet?.balance ?? walletData?.balance ?? null
+      // Handle stats
+      if (statsData.status === 'fulfilled') {
+        const normalizedStats = statsData.value?.data ?? statsData.value ?? null;
+        if (normalizedStats) setStats(normalizedStats);
+      }
 
-      if (normalizedStats) setStats(normalizedStats)
-      if (Array.isArray(normalizedJobs)) setAvailableJobs(normalizedJobs)
-      else setAvailableJobs([])
-      if (Array.isArray(normalizedBookings)) setActiveBookings(normalizedBookings)
-      else setActiveBookings([])
-      if (normalizedWalletBalance) setWalletBalance(normalizedWalletBalance)
+      // Handle available jobs - with better normalization
+      if (jobsData.status === 'fulfilled') {
+        let normalizedJobs = [];
+        const jobsResponse = jobsData.value;
+        
+        if (Array.isArray(jobsResponse)) {
+          normalizedJobs = jobsResponse;
+        } else if (jobsResponse?.data?.bookings) {
+          normalizedJobs = jobsResponse.data.bookings;
+        } else if (jobsResponse?.data && Array.isArray(jobsResponse.data)) {
+          normalizedJobs = jobsResponse.data;
+        } else if (Array.isArray(jobsResponse?.bookings)) {
+          normalizedJobs = jobsResponse.bookings;
+        } else if (jobsResponse?.data) {
+          // If it's a single booking object, wrap in array
+          normalizedJobs = [jobsResponse.data].filter(Boolean);
+        }
+        
+        console.log('Available jobs loaded:', normalizedJobs.length);
+        setAvailableJobs(normalizedJobs);
+      } else {
+        console.error('Failed to load available jobs:', jobsData.reason);
+        setAvailableJobs([]);
+      }
+
+      // Handle active bookings
+      if (bookingsData.status === 'fulfilled') {
+        const normalizedBookings = bookingsData.value?.data?.bookings ?? 
+                                bookingsData.value?.bookings ?? 
+                                bookingsData.value ?? [];
+        setActiveBookings(Array.isArray(normalizedBookings) ? normalizedBookings : []);
+      }
+
+      // Handle wallet balance
+      if (walletData.status === 'fulfilled') {
+        const walletResponse = walletData.value;
+        const balance = walletResponse?.data?.balance ?? 
+                      walletResponse?.balance ?? 
+                      walletResponse?.data?.wallet?.balance ?? null;
+        setWalletBalance(balance);
+      }
 
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load dashboard data')
+      console.error('Dashboard load error:', err);
+      setError(err.response?.data?.error || 'Failed to load dashboard data');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   // Quick stats cards
   const quickStats = [
@@ -171,7 +261,7 @@ export default function FundiDashboard() {
             {/* Available Jobs */}
             <div className="bg-white rounded-2xl shadow-soft p-8">
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-gray-900 font-heading">Available Jobs</h2>
+                <h2 className="text-2xl font-bold text-gray-900 font-heading">Available Jobs {availableJobs.length > 0 && `(${availableJobs.length})`}</h2>
                 <Link
                   to="/bookings?status=pending"
                   className="text-teal-600 hover:text-teal-700 font-medium text-sm"
@@ -179,12 +269,25 @@ export default function FundiDashboard() {
                   View All
                 </Link>
               </div>
+              {/* Debug info - remove in production */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">
+                  <p>Debug: Found {availableJobs.length} available jobs</p>
+                  <p>User: {user?.firstName} (Fundi)</p>
+                </div>
+              )}
 
               {availableJobs.length === 0 ? (
                 <div className="text-center py-8">
                   <Briefcase className="w-16 h-16 text-gray-300 mx-auto mb-4" />
                   <p className="text-gray-500 mb-2">No available jobs at the moment</p>
-                  <p className="text-gray-400 text-sm">New jobs will appear here as clients book services</p>
+                  <p className="text-gray-400 text-sm">New jobs will appear here when clients book services matching your skills</p>
+                  <button 
+                    onClick={loadDashboardData}
+                    className="mt-4 text-teal-600 hover:text-teal-700 text-sm font-medium"
+                  >
+                    Refresh Jobs
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-4">

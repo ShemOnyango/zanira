@@ -1,6 +1,7 @@
 // frontend/src/pages/admin/ShopVerification.jsx
 import { useState, useEffect } from 'react'
 import { Search, Filter, CheckCircle, XCircle, Eye, MapPin, Clock, ShoppingCart } from 'lucide-react'
+import Modal from '../../components/common/Modal'
 import { useApi } from '../../hooks/useApi'
 import { shopAPI } from '../../lib/api'
 import LoadingSpinner from '../../components/common/LoadingSpinner'
@@ -10,9 +11,13 @@ const ShopVerification = () => {
   const [filter, setFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
+  const [selectedShop, setSelectedShop] = useState(null)
+  const [showDetails, setShowDetails] = useState(false)
+  const [previewFile, setPreviewFile] = useState(null)
+  const [showPreview, setShowPreview] = useState(false)
 
   const { execute: fetchShops } = useApi(shopAPI.getPendingShops, { showToast: false })
-  const { execute: verifyShop } = useApi(shopAPI.verify, { showToast: true })
+  const { execute: verifyShop } = useApi((id, data) => shopAPI.verify(id, data), { showToast: true })
   const { execute: updateShop } = useApi(shopAPI.update, { showToast: true })
 
   useEffect(() => {
@@ -24,8 +29,9 @@ const ShopVerification = () => {
       setLoading(true)
       const shopsData = await fetchShops()
       if (shopsData) {
-        const payload = shopsData.data ?? shopsData ?? []
-        setShops(Array.isArray(payload) ? payload : [])
+        // support multiple response shapes: { data: { shops } } | { shops } | [shop,...]
+        const shopsList = shopsData?.data?.shops || shopsData?.shops || (Array.isArray(shopsData?.data) ? shopsData.data : null) || (Array.isArray(shopsData) ? shopsData : null) || []
+        setShops(Array.isArray(shopsList) ? shopsList : [])
       }
     } catch (error) {
       console.error('Failed to load shops:', error)
@@ -36,8 +42,9 @@ const ShopVerification = () => {
 
   const handleVerify = async (shopId, commissionRate) => {
     try {
-      await verifyShop(shopId)
-      if (commissionRate) {
+      // call verify endpoint with status 'verified'
+      await verifyShop(shopId, { status: 'verified' })
+      if (commissionRate !== undefined && commissionRate !== null) {
         await updateShop(shopId, { commissionRate })
       }
       loadShops() // Refresh the list
@@ -48,7 +55,8 @@ const ShopVerification = () => {
 
   const handleReject = async (shopId) => {
     try {
-      await updateShop(shopId, { status: 'rejected' })
+      // prefer using verify endpoint to set status to rejected
+      await verifyShop(shopId, { status: 'rejected' })
       loadShops()
     } catch (error) {
       console.error('Failed to reject shop:', error)
@@ -56,9 +64,10 @@ const ShopVerification = () => {
   }
 
   const filteredShops = shops.filter(shop => {
-    const matchesSearch = shop.shopName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         shop.owner?.firstName?.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesFilter = filter === 'all' || shop.status === filter
+    const ownerName = `${shop.user?.firstName || ''} ${shop.user?.lastName || ''}`.toLowerCase()
+    const matchesSearch = shop.shopName?.toLowerCase().includes(searchTerm.toLowerCase()) || ownerName.includes(searchTerm.toLowerCase())
+    const status = shop.verification?.overallStatus || 'pending'
+    const matchesFilter = filter === 'all' || status === filter
     return matchesSearch && matchesFilter
   })
 
@@ -125,25 +134,25 @@ const ShopVerification = () => {
                   <td className="px-6 py-4">
                     <div className="flex items-center space-x-3">
                       <img
-                        src={shop.logo || '/default-shop.png'}
-                        alt={shop.shopName}
+                            src={shop.logo || '/default-shop.png'}
+                            alt={shop.shopName}
                         className="w-12 h-12 rounded-lg object-cover"
                       />
                       <div>
                         <p className="font-medium text-gray-900">{shop.shopName}</p>
                         <p className="text-sm text-gray-500">{shop.shopType}</p>
-                        <p className="text-sm text-gray-500">
-                          {shop.owner?.firstName} {shop.owner?.lastName}
-                        </p>
+                            <p className="text-sm text-gray-500">
+                              {shop.user?.firstName} {shop.user?.lastName}
+                            </p>
                       </div>
                     </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center space-x-2 text-sm text-gray-900">
                       <MapPin size={16} />
-                      <span>{shop.town}, {shop.county}</span>
+                          <span>{shop.location?.town || '-'}, {shop.location?.county || '-'}</span>
                     </div>
-                    <p className="text-sm text-gray-500 mt-1">{shop.address}</p>
+                        <p className="text-sm text-gray-500 mt-1">{shop.location?.address || ''}</p>
                   </td>
                   <td className="px-6 py-4">
                     <input
@@ -166,19 +175,25 @@ const ShopVerification = () => {
                     <span className="text-sm text-gray-500 ml-1">%</span>
                   </td>
                   <td className="px-6 py-4">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      shop.verified 
-                        ? 'bg-green-100 text-green-800'
-                        : shop.status === 'rejected'
-                        ? 'bg-red-100 text-red-800'
-                        : 'bg-yellow-100 text-yellow-800'
-                    }`}>
-                      {shop.verified ? 'Verified' : shop.status === 'rejected' ? 'Rejected' : 'Pending'}
-                    </span>
+                    {(() => {
+                      const status = shop.verification?.overallStatus || 'pending'
+                      const isVerified = status === 'verified'
+                      return (
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          isVerified
+                            ? 'bg-green-100 text-green-800'
+                            : status === 'rejected'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {isVerified ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Pending'}
+                        </span>
+                      )
+                    })()}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center space-x-2">
-                      {!shop.verified && shop.status !== 'rejected' && (
+                      {!(shop.verification?.overallStatus === 'verified') && shop.verification?.overallStatus !== 'rejected' && (
                         <>
                           <button
                             onClick={() => handleVerify(shop._id, shop.commissionRate)}
@@ -199,6 +214,10 @@ const ShopVerification = () => {
                       <button
                         className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors"
                         title="View Details"
+                        onClick={() => {
+                          setSelectedShop(shop)
+                          setShowDetails(true)
+                        }}
                       >
                         <Eye size={16} />
                       </button>
@@ -209,6 +228,110 @@ const ShopVerification = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Details Modal (uses shared Modal component) */}
+        <Modal
+          isOpen={showDetails}
+          onClose={() => setShowDetails(false)}
+          title={selectedShop ? selectedShop.shopName : 'Shop Details'}
+          size="lg"
+        >
+          {selectedShop ? (
+            <div className="p-4">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">{selectedShop.shopType}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <img
+                    src={selectedShop.logo || '/default-shop.png'}
+                    alt={selectedShop.shopName}
+                    className="w-full h-48 object-cover rounded"
+                  />
+                  <div>
+                    <p className="text-sm text-gray-600">Owner</p>
+                    <p className="text-gray-900">{selectedShop.user?.firstName} {selectedShop.user?.lastName}</p>
+                    {selectedShop.user?.email && <p className="text-sm text-gray-500">{selectedShop.user.email}</p>}
+                    {selectedShop.user?.phone && <p className="text-sm text-gray-500">{selectedShop.user.phone}</p>}
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Commission Rate</p>
+                    <p className="text-gray-900">{selectedShop.commissionRate ?? 10}%</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Verification Status</p>
+                    <p className="text-gray-900">{selectedShop.verification?.overallStatus || 'pending'}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm text-gray-600">Location</p>
+                    <p className="text-gray-900">{selectedShop.location?.town || '-'}, {selectedShop.location?.county || '-'}</p>
+                    <p className="text-sm text-gray-500">{selectedShop.location?.address}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Description</p>
+                    <p className="text-gray-900">{selectedShop.description || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Documents</p>
+                    {Array.isArray(selectedShop.documents) && selectedShop.documents.length > 0 ? (
+                      <ul className="list-disc list-inside text-sm text-gray-700">
+                        {selectedShop.documents.map((d, i) => (
+                          <li key={i} className="flex items-center justify-between">
+                            <span className="mr-2">{d.name || `Document ${i+1}`}</span>
+                            <div className="flex items-center space-x-2">
+                              <button
+                                onClick={() => {
+                                  setPreviewFile(d.url || d)
+                                  setShowPreview(true)
+                                }}
+                                className="text-blue-600 underline text-sm"
+                                type="button"
+                              >
+                                View
+                              </button>
+                              <a href={d.url || d} target="_blank" rel="noreferrer" className="text-gray-600 text-sm">Open</a>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-gray-500">No documents available</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <button onClick={() => setShowDetails(false)} className="px-4 py-2 bg-gray-100 rounded">Close</button>
+              </div>
+            </div>
+          ) : null}
+        </Modal>
+
+        {/* File Preview Modal (re-uses same modal component) */}
+        <Modal isOpen={showPreview} onClose={() => setShowPreview(false)} title="Document Preview" size="xl">
+          <div className="flex justify-center p-4">
+            {previewFile?.endsWith('.mp4') || previewFile?.includes('video') ? (
+              <video controls className="w-full h-96 rounded-lg">
+                <source src={previewFile} type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            ) : previewFile?.endsWith('.pdf') ? (
+              <iframe src={previewFile} className="w-full h-96 rounded-lg" title="PDF Preview" />
+            ) : (
+              <img src={previewFile} alt="Preview" className="w-full h-96 object-contain rounded-lg" />
+            )}
+          </div>
+          <div className="flex justify-end p-4">
+            <button onClick={() => setShowPreview(false)} className="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">Close</button>
+          </div>
+        </Modal>
 
         {filteredShops.length === 0 && (
           <div className="text-center py-12">

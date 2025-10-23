@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useApi } from '../../hooks/useApi'
 import { chatAPI } from '../../lib/api'
+import { userAPI } from '../../lib/api'
 import { useSocket } from '../../contexts/SocketContext'
 import { useAuthStore } from '../../store/authStore'
 import LoadingSpinner from '../../components/common/LoadingSpinner'
@@ -33,12 +34,15 @@ export default function Messages() {
   const [sending, setSending] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const messagesEndRef = useRef(null)
+  const [showAdminModal, setShowAdminModal] = useState(false)
 
   // API hooks
   const { execute: fetchChats } = useApi(chatAPI.getChats, { showToast: false })
   const { execute: fetchMessages } = useApi(chatAPI.getMessages, { showToast: false })
   const { execute: sendMessageApi } = useApi(chatAPI.sendMessage)
   const { execute: markAsRead } = useApi(chatAPI.markAsRead, { showToast: false })
+  const { execute: createChatApi } = useApi(chatAPI.createChat, { showToast: true })
+  const { execute: searchUsersApi } = useApi(userAPI.getAllUsers, { showToast: false })
 
   // Load chats
   useEffect(() => {
@@ -87,9 +91,22 @@ export default function Messages() {
   const loadMessages = async (chatId) => {
     try {
       const data = await fetchMessages(chatId)
-      if (data) {
-        setMessages(data)
+      // Normalize different possible API shapes into an array of message objects
+      const normalizeMessages = (d) => {
+        if (!d) return []
+        if (Array.isArray(d)) return d
+        if (Array.isArray(d.data)) return d.data
+        if (Array.isArray(d.messages)) return d.messages
+        if (Array.isArray(d.data?.messages)) return d.data.messages
+        if (Array.isArray(d.data?.data)) return d.data.data
+        if (Array.isArray(d.data?.data?.messages)) return d.data.data.messages
+        // If controller returns wrapped shape { success: true, data: { messages: [...] } }
+        if (Array.isArray(d.data?.data?.data)) return d.data.data.data
+        return []
       }
+
+      const msgs = normalizeMessages(data)
+      setMessages(msgs)
     } catch (error) {
       console.error('Failed to load messages:', error)
     }
@@ -111,22 +128,38 @@ export default function Messages() {
   useEffect(() => {
     if (socket) {
       // Listen for new messages
-      socket.on('new_message', (message) => {
-        if (message.chatId === selectedChat?._id) {
-          setMessages(prev => [...prev, message])
+      socket.on('new_message', (payload) => {
+        // server emits { chatId, message, chat } or message directly
+        const raw = payload?.message || payload
+        const chatId = payload?.chatId || raw?.chatId
+        const items = Array.isArray(raw) ? raw : [raw]
+
+        if (chatId === selectedChat?._id) {
+          setMessages(prev => {
+            const prevArr = Array.isArray(prev) ? prev : []
+            return [...prevArr, ...items]
+          })
         }
-        
-        // Update chat list with new message
-        setChats(prev => prev.map(chat => 
-          chat._id === message.chatId 
-            ? { 
-                ...chat, 
-                lastMessage: message.content,
-                lastMessageAt: message.createdAt,
-                unreadCount: chat._id === selectedChat?._id ? 0 : (chat.unreadCount || 0) + 1
-              }
-            : chat
-        ))
+
+        // Update chat list with new message; compute unreadCount defensively
+        setChats(prev => prev.map(chat => {
+          if (chat._id !== chatId) return chat
+          const last = items[items.length - 1]
+          // derive previous numeric unread count
+          let prevCount = 0
+          if (typeof chat.unreadCount === 'number') prevCount = chat.unreadCount
+          else if (chat.unreadCount && typeof chat.unreadCount === 'object') {
+            prevCount = (chat.unreadCount[user._id] ?? Object.values(chat.unreadCount)[0] ?? 0)
+          }
+          const unread = chat._id === selectedChat?._id ? 0 : (prevCount + items.length)
+
+          return {
+            ...chat,
+            lastMessage: last?.content || '',
+            lastMessageAt: last?.timestamp || last?.createdAt || new Date(),
+            unreadCount: unread
+          }
+        }))
       })
 
       // Listen for typing indicators
@@ -184,6 +217,162 @@ export default function Messages() {
     }
   }
 
+  // Admin modal: create chat/send initial message
+  const AdminMessageModal = ({ isOpen, onClose }) => {
+    const [mode, setMode] = useState('chat') // chat or email (email not implemented here)
+    const [chatType, setChatType] = useState('group')
+    const [participants, setParticipants] = useState('')
+    const [searchTerm, setSearchTerm] = useState('')
+    const [searchResults, setSearchResults] = useState([])
+    const [selectedParticipants, setSelectedParticipants] = useState([]) // array of user objects
+    const searchTimer = useRef(null)
+    const [initialMessageAdmin, setInitialMessageAdmin] = useState('')
+    const [sendingAdmin, setSendingAdmin] = useState(false)
+
+    const handleCreate = async () => {
+      try {
+        setSendingAdmin(true)
+        // Build participants list from selectedParticipants (ids). Exclude current user if present
+        const parts = selectedParticipants.map(u => String(u._id)).filter(id => id !== String(user._id))
+
+        const payload = {
+          chatType,
+          participants: parts.length > 0 ? parts : undefined,
+          initialMessage: initialMessageAdmin
+        }
+
+        const resp = await createChatApi(payload)
+        // normalize response to extract created chat
+        let created = null
+        if (!resp) created = null
+        else if (resp.data && resp.data.data) created = resp.data.data
+        else if (resp.data) created = resp.data
+        else created = resp
+
+        // If API returned the created chat, open it in UI
+        if (created && created._id) {
+          setSelectedChat(created)
+          // load messages for the new chat
+          try { await loadMessages(created._id) } catch (e) { console.warn('Failed to load messages for new chat', e) }
+        }
+
+        onClose()
+      } catch (err) {
+        console.error('Failed to create chat/send email', err)
+      } finally {
+        setSendingAdmin(false)
+      }
+    }
+
+    // Search users for typeahead (debounced)
+    const handleSearchChange = (val) => {
+      setSearchTerm(val)
+      if (searchTimer.current) clearTimeout(searchTimer.current)
+      if (!val || val.trim().length < 2) {
+        setSearchResults([])
+        return
+      }
+      searchTimer.current = setTimeout(async () => {
+        try {
+          const res = await searchUsersApi({ search: val, limit: 10 })
+          // normalize returned shapes
+          let list = []
+          if (!res) list = []
+          else if (Array.isArray(res)) list = res
+          else if (Array.isArray(res.data)) list = res.data
+          else if (Array.isArray(res.data?.data)) list = res.data.data
+          else list = res.data || []
+
+          // exclude current user and already selected
+          const filtered = (list || []).filter(u => String(u._id) !== String(user._id) && !selectedParticipants.find(p => String(p._id) === String(u._id)))
+          setSearchResults(filtered)
+        } catch (e) {
+          console.error('User search failed', e)
+          setSearchResults([])
+        }
+      }, 300)
+    }
+
+    const addParticipant = (u) => {
+      setSelectedParticipants(prev => [...prev, u])
+      setSearchTerm('')
+      setSearchResults([])
+    }
+
+    const removeParticipant = (id) => {
+      setSelectedParticipants(prev => prev.filter(p => String(p._id) !== String(id)))
+    }
+
+    if (!isOpen) return null
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="bg-white rounded-lg shadow-lg w-[520px]">
+          <div className="p-4 border-b flex items-center justify-between">
+            <h3 className="text-lg font-semibold">New Message</h3>
+            <button onClick={onClose} className="text-gray-500">✕</button>
+          </div>
+          <div className="p-4">
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700">Chat Type</label>
+              <select value={chatType} onChange={(e) => setChatType(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300">
+                <option value="group">Group</option>
+                <option value="direct">Direct</option>
+              </select>
+            </div>
+
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700">Participants</label>
+              <div className="mt-1">
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {selectedParticipants.map(p => (
+                    <span key={p._id} className="inline-flex items-center px-2 py-1 bg-gray-100 rounded text-sm">
+                      <img src={p.profilePhoto || '/default-avatar.png'} alt={p.firstName} className="w-4 h-4 rounded-full mr-1" />
+                      <span className="mr-2">{p.firstName} {p.lastName}</span>
+                      <button onClick={() => removeParticipant(p._id)} className="text-xs text-gray-500">✕</button>
+                    </span>
+                  ))}
+                </div>
+                <input
+                  value={searchTerm}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  className="w-full rounded-md border-gray-300 px-3 py-2"
+                  placeholder="Search users by name or email..."
+                />
+                {searchResults.length > 0 && (
+                  <div className="mt-2 bg-white border rounded shadow max-h-44 overflow-auto">
+                    {searchResults.map(u => (
+                      <div key={u._id} className="p-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between" onClick={() => addParticipant(u)}>
+                        <div className="flex items-center space-x-2">
+                          <img src={u.profilePhoto || '/default-avatar.png'} alt={u.firstName} className="w-8 h-8 rounded-full" />
+                          <div>
+                            <div className="font-medium text-sm">{u.firstName} {u.lastName}</div>
+                            <div className="text-xs text-gray-500">{u.email} • {u.role}</div>
+                          </div>
+                        </div>
+                        <div className="text-sm text-teal-600">Add</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700">Initial Message</label>
+              <textarea value={initialMessageAdmin} onChange={(e) => setInitialMessageAdmin(e.target.value)} rows={4} className="mt-1 block w-full rounded-md border-gray-300" />
+            </div>
+
+            <div className="flex justify-end space-x-3">
+              <button onClick={onClose} className="px-4 py-2 bg-white border rounded">Cancel</button>
+              <button onClick={handleCreate} disabled={sendingAdmin} className="px-4 py-2 bg-indigo-600 text-white rounded">{sendingAdmin ? 'Sending...' : 'Create Chat'}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Handle typing
   const handleTyping = () => {
     if (socket && selectedChat) {
@@ -196,16 +385,45 @@ export default function Messages() {
     return chat.participants.find(p => p._id !== user._id)
   }
 
+  // Safely coerce various possible values (string, object message, etc.) to a short string
+  const safeText = (v) => {
+    if (v == null) return ''
+    if (typeof v === 'string') return v
+    if (typeof v === 'object') {
+      if (typeof v.content === 'string') return v.content
+      if (typeof v.text === 'string') return v.text
+      if (typeof v.message === 'string') return v.message
+      // If v is a message object with nested content
+      if (typeof v?.body === 'string') return v.body
+      try {
+        // Fallback: stringify but keep it short
+        const s = JSON.stringify(v)
+        return s.length > 200 ? s.substring(0, 200) + '...' : s
+      } catch (e) {
+        return ''
+      }
+    }
+    return String(v)
+  }
+
   // Filter chats based on search
   const safeChats = Array.isArray(chats) ? chats : []
   const filteredChats = safeChats.filter(chat => {
     const otherParticipant = getOtherParticipant(chat)
     const searchLower = searchQuery.toLowerCase()
-    
+
+    const firstName = (otherParticipant?.firstName || '').toString().toLowerCase()
+    const lastName = (otherParticipant?.lastName || '').toString().toLowerCase()
+    // chat.lastMessage may be a string, an object (e.g., message), or null - coerce safely
+    const lastMessageRaw = typeof chat.lastMessage === 'string'
+      ? chat.lastMessage
+      : (chat.lastMessage?.content ?? chat.lastMessage ?? '')
+    const lastMessage = lastMessageRaw.toString().toLowerCase()
+
     return (
-      otherParticipant?.firstName?.toLowerCase().includes(searchLower) ||
-      otherParticipant?.lastName?.toLowerCase().includes(searchLower) ||
-      chat.lastMessage?.toLowerCase().includes(searchLower)
+      firstName.includes(searchLower) ||
+      lastName.includes(searchLower) ||
+      lastMessage.includes(searchLower)
     )
   })
 
@@ -248,6 +466,12 @@ export default function Messages() {
                   className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
                 />
               </div>
+              {/* Admin New Message button */}
+              {user && (user.role === 'admin' || user.role === 'super_admin') && (
+                <div className="mt-4">
+                  <button onClick={() => setShowAdminModal(true)} className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg">New Message</button>
+                </div>
+              )}
             </div>
 
             {/* Chat List */}
@@ -302,7 +526,7 @@ export default function Messages() {
                           </div>
 
                           <p className="text-sm text-gray-600 truncate mb-1">
-                            {truncateText(chat.lastMessage, 50)}
+                            {truncateText(safeText(chat.lastMessage), 50)}
                           </p>
 
                           <div className="flex items-center justify-between">
@@ -326,6 +550,9 @@ export default function Messages() {
               )}
             </div>
           </div>
+
+      {/* Admin New Message Modal */}
+      <AdminMessageModal isOpen={showAdminModal} onClose={() => setShowAdminModal(false)} />
 
           {/* Main Chat Area */}
           <div className="flex-1 flex flex-col">
@@ -364,7 +591,7 @@ export default function Messages() {
 
                 {/* Messages */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-                  {messages.length === 0 ? (
+                  {(!Array.isArray(messages) || messages.length === 0) ? (
                     <div className="text-center py-12">
                       <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <Send className="w-8 h-8 text-gray-400" />
@@ -372,39 +599,55 @@ export default function Messages() {
                       <p className="text-gray-500">No messages yet</p>
                       <p className="text-gray-400 text-sm mt-1">Start the conversation</p>
                     </div>
-                  ) : (
-                    messages.map((message) => (
-                      <div
-                        key={message._id}
-                        className={`flex ${message.sender._id === user._id ? 'justify-end' : 'justify-start'}`}
-                      >
+                    ) : (
+                    (Array.isArray(messages) ? messages : []).map((message) => {
+                      // Guard sender id lookup and coerce content to a string so React doesn't try to render objects
+                      const senderId = message?.sender?._id ?? message?.sender
+                      const isOwn = String(senderId) === String(user._id)
+
+                      let contentStr = ''
+                      if (typeof message?.content === 'string') contentStr = message.content
+                      else if (typeof message?.content?.content === 'string') contentStr = message.content.content
+                      else if (typeof message?.content?.text === 'string') contentStr = message.content.text
+                      else if (typeof message?.body === 'string') contentStr = message.body
+                      else if (message?.messageType && typeof message.messageType === 'string') contentStr = `[${message.messageType}] ${JSON.stringify(message.content ?? '')}`
+                      else contentStr = JSON.stringify(message?.content ?? message ?? '')
+
+                      const key = message?._id || message?.id || `${selectedChat?._id || 'chat'}-${message?.timestamp || Math.random()}`
+
+                      return (
                         <div
-                          className={`max-w-xs lg:max-w-md rounded-lg p-3 ${
-                            message.sender._id === user._id
-                              ? 'bg-teal-500 text-white'
-                              : 'bg-white text-gray-900 border border-gray-200'
-                          }`}
+                          key={key}
+                          className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                         >
-                          <p className="text-sm">{message.content}</p>
-                          <div className={`flex items-center space-x-1 mt-1 text-xs ${
-                            message.sender._id === user._id ? 'text-teal-100' : 'text-gray-500'
-                          }`}>
-                            <span>{formatRelativeTime(message.createdAt)}</span>
-                            {message.sender._id === user._id && (
-                              <>
-                                {message.read ? (
-                                  <CheckCheck className="w-3 h-3" />
-                                ) : message.delivered ? (
-                                  <Check className="w-3 h-3" />
-                                ) : (
-                                  <Clock className="w-3 h-3" />
-                                )}
-                              </>
-                            )}
+                          <div
+                            className={`max-w-xs lg:max-w-md rounded-lg p-3 ${
+                              isOwn
+                                ? 'bg-teal-500 text-white'
+                                : 'bg-white text-gray-900 border border-gray-200'
+                            }`}
+                          >
+                            <p className="text-sm">{contentStr}</p>
+                            <div className={`flex items-center space-x-1 mt-1 text-xs ${
+                              isOwn ? 'text-teal-100' : 'text-gray-500'
+                            }`}>
+                              <span>{formatRelativeTime(message.createdAt || message.timestamp)}</span>
+                              {isOwn && (
+                                <>
+                                  {message.read ? (
+                                    <CheckCheck className="w-3 h-3" />
+                                  ) : message.delivered ? (
+                                    <Check className="w-3 h-3" />
+                                  ) : (
+                                    <Clock className="w-3 h-3" />
+                                  )}
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      )
+                    })
                   )}
                   <div ref={messagesEndRef} />
                 </div>

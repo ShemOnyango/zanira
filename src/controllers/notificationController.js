@@ -1,7 +1,7 @@
 // controllers/notificationController.js
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
-import Booking from '../models/Booking.js';
+import { normalizeRole, resolveRecipientType } from '../utils/roleUtils.js';
 import asyncHandler from 'express-async-handler';
 import mongoose from 'mongoose';
 
@@ -27,7 +27,7 @@ export const getUserNotifications = asyncHandler(async (req, res) => {
   // Build filter query
   let filter = {
     recipient: userId,
-    recipientType: userRole
+    recipientType: resolveRecipientType(userRole) || normalizeRole(userRole)
   };
 
   // Apply filters
@@ -257,9 +257,11 @@ export const createNotification = asyncHandler(async (notificationData) => {
     throw new Error('Recipient not found or inactive');
   }
 
+  const resolvedRecipientType = resolveRecipientType(recipientType) || normalizeRole(recipientType) || normalizeRole((await User.findById(recipient)).role);
+
   const notification = await Notification.create({
     recipient,
-    recipientType,
+    recipientType: resolvedRecipientType,
     title,
     message,
     notificationType,
@@ -593,7 +595,7 @@ export const createVerificationNotification = asyncHandler(async (user, type, ad
 
   const notification = await createNotification({
     recipient: user._id,
-    recipientType: user.role,
+    recipientType: normalizeRole(user.role),
     ...config,
     notificationType: type,
     data: {
@@ -622,7 +624,7 @@ export const createMessageNotification = asyncHandler(async (chat, message, reci
   const sender = await User.findById(message.sender);
   const notification = await createNotification({
     recipient: recipientId,
-    recipientType: recipient.role,
+    recipientType: normalizeRole(recipient.role),
     title: `New message from ${sender?.name || 'User'}`,
     message: message.content.length > 50 
       ? `${message.content.substring(0, 50)}...` 

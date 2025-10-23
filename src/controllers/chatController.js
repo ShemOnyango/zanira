@@ -4,7 +4,24 @@ import User from '../models/User.js';
 import Booking from '../models/Booking.js';
 import asyncHandler from 'express-async-handler';
 import { v4 as uuidv4 } from 'uuid';
-import mongoose from 'mongoose';
+import { normalizeRole as normalizeRoleUtil } from '../utils/roleUtils.js';
+
+// Helper: safely read unread count whether `unreadCount` is a Map (mongoose Map)
+// or a plain object (returned when using .lean()). Returns 0 if missing.
+const getUnreadCount = (unreadCount, userId) => {
+  if (!unreadCount) return 0;
+  // If it's a Map-like object with get()
+  if (typeof unreadCount.get === 'function') {
+    return unreadCount.get(String(userId)) || 0;
+  }
+  // Fallback to plain object indexing
+  try {
+    const key = String(userId);
+    return unreadCount[key] || unreadCount.get?.(key) || 0;
+  } catch (e) {
+    return 0;
+  }
+};
 
 // @desc    Get all chats for current user
 // @route   GET /api/v1/chats
@@ -38,7 +55,7 @@ export const getUserChats = asyncHandler(async (req, res) => {
 
   // Calculate unread counts for current user
   const chatsWithUnread = chats.map(chat => {
-    const unreadCount = chat.unreadCount?.get(userId.toString()) || 0;
+    const unreadCount = getUnreadCount(chat.unreadCount, userId);
     return {
       ...chat,
       unreadCount,
@@ -94,7 +111,7 @@ export const getAdminConversations = asyncHandler(async (req, res) => {
   const adminId = req.user._id;
 
   const chatsWithMeta = chats.map(chat => {
-    const unreadCount = chat.unreadCount?.get(adminId.toString()) || 0;
+    const unreadCount = getUnreadCount(chat.unreadCount, adminId);
     return {
       ...chat,
       unreadCount,
@@ -154,6 +171,9 @@ export const createChat = asyncHandler(async (req, res) => {
   const userId = req.user._id;
   const userRole = req.user.role;
 
+  // Helper alias for normalizeRole utility (normalizeRoleUtil imported above)
+  const normalizeRole = (r) => normalizeRoleUtil(r);
+
   // Validate booking if provided
   let booking = null;
   if (bookingId) {
@@ -177,9 +197,10 @@ export const createChat = asyncHandler(async (req, res) => {
 
   // Determine chat type based on user role
   let chatType;
+  // Ensure participant roles are normalized to canonical enums before persisting
   let participants = [{
     user: userId,
-    role: userRole,
+    role: normalizeRole(userRole),
     joinedAt: new Date(),
     isActive: true
   }];
@@ -201,7 +222,7 @@ export const createChat = asyncHandler(async (req, res) => {
 
     participants.push({
       user: admin._id,
-      role: admin.role,
+      role: normalizeRole(admin.role),
       joinedAt: new Date(),
       isActive: true
     });
@@ -210,22 +231,28 @@ export const createChat = asyncHandler(async (req, res) => {
     chatType = req.body.chatType || 'group';
     
     if (req.body.participants && Array.isArray(req.body.participants)) {
-      // Validate all participants exist
+      // Remove duplicates and exclude the sender from requested participants
+      const uniqueRequested = Array.from(new Set(req.body.participants.map(String))).filter(id => id !== String(userId));
+
+      // Validate all participants exist and are active
       const participantUsers = await User.find({
-        _id: { $in: req.body.participants },
+        _id: { $in: uniqueRequested },
         status: 'active'
       });
 
-      if (participantUsers.length !== req.body.participants.length) {
+      if (participantUsers.length !== uniqueRequested.length) {
         res.status(400);
-        throw new Error('One or more participants not found');
+        throw new Error('One or more participants not found or inactive');
       }
 
-      // Add participants with their roles
+      // Add participants with their roles (normalize roles to allowed enums)
       participantUsers.forEach(user => {
+        // Skip adding the creator if they somehow are in the list
+        if (String(user._id) === String(userId)) return;
+
         participants.push({
           user: user._id,
-          role: user.role,
+          role: normalizeRole(user.role),
           joinedAt: new Date(),
           isActive: true
         });
@@ -310,8 +337,11 @@ export const addParticipant = asyncHandler(async (req, res) => {
     throw new Error('User not found or inactive');
   }
 
+  // Normalize role before adding
+  const resolvedRole = normalizeRoleUtil(role || userToAdd.role);
+
   // Add participant
-  await chat.addParticipant(userId, role);
+  await chat.addParticipant(userId, resolvedRole);
   await chat.populate('participants.user', 'name email role avatar');
 
   // Add system message about new participant
@@ -604,13 +634,13 @@ export const getOrCreateBookingChat = asyncHandler(async (req, res) => {
       participants: [
         {
           user: userId,
-          role: userRole,
+          role: normalizeRoleUtil(userRole),
           joinedAt: new Date(),
           isActive: true
         },
         {
           user: admin._id,
-          role: admin.role,
+          role: normalizeRoleUtil(admin.role),
           joinedAt: new Date(),
           isActive: true
         }
@@ -628,7 +658,7 @@ export const getOrCreateBookingChat = asyncHandler(async (req, res) => {
       }
     });
 
-    await chat.populate('participants.user', 'name email role avatar');
+  await chat.populate('participants.user', 'name email role avatar');
     await chat.populate('context.booking', 'description status agreedPrice');
   }
 

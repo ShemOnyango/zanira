@@ -3,7 +3,8 @@ import Client from '../models/Client.js';
 import Fundi from '../models/Fundi.js';
 import Admin from '../models/Admin.js';
 import Shop from '../models/Shop.js';
-import { sanitizeUser } from '../utils/authUtils.js';
+import { sanitizeUser, generateToken } from '../utils/authUtils.js';
+import cloudinary from '../config/cloudinary.js';
 import logger from '../middleware/logger.js';
 
 // @desc    Get user profile
@@ -13,25 +14,29 @@ export const getProfile = async (req, res, next) => {
   try {
     let userData = sanitizeUser(req.user);
 
-    // Populate role-specific data
+    // Populate role-specific data - fix case blocks
     switch (req.user.role) {
-      case 'client':
+      case 'client': {
         const client = await Client.findOne({ user: req.user._id });
         userData.clientProfile = client;
         break;
-      case 'fundi':
+      }
+      case 'fundi': {
         const fundi = await Fundi.findOne({ user: req.user._id })
           .populate('servicesOffered.service');
         userData.fundiProfile = fundi;
         break;
-      case 'admin':
+      }
+      case 'admin': {
         const admin = await Admin.findOne({ user: req.user._id });
         userData.adminProfile = admin;
         break;
-      case 'shop_owner':
+      }
+      case 'shop_owner': {
         const shop = await Shop.findOne({ user: req.user._id });
         userData.shopProfile = shop;
         break;
+      }
     }
 
     res.status(200).json({
@@ -176,25 +181,29 @@ export const getUser = async (req, res, next) => {
 
     let userData = sanitizeUser(user);
 
-    // Populate role-specific data based on admin permissions
+    // Populate role-specific data based on admin permissions - fix case blocks
     if (req.user.role === 'super_admin' || req.user.role === 'admin') {
       switch (user.role) {
-        case 'client':
+        case 'client': {
           const client = await Client.findOne({ user: user._id });
           userData.clientProfile = client;
           break;
-        case 'fundi':
+        }
+        case 'fundi': {
           const fundi = await Fundi.findOne({ user: user._id });
           userData.fundiProfile = fundi;
           break;
-        case 'admin':
+        }
+        case 'admin': {
           const admin = await Admin.findOne({ user: user._id });
           userData.adminProfile = admin;
           break;
-        case 'shop_owner':
+        }
+        case 'shop_owner': {
           const shop = await Shop.findOne({ user: user._id });
           userData.shopProfile = shop;
           break;
+        }
       }
     }
 

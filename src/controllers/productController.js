@@ -32,7 +32,12 @@ export const getProduct = asyncHandler(async (req, res) => {
 // @route POST /api/v1/products
 // @access Private (shop_owner | admin)
 export const createProduct = asyncHandler(async (req, res) => {
-  const { name, description, price, sku, images, shop } = req.body;
+  let { name, description, price, sku, images, shop } = req.body;
+
+  // sanitize empty shop values (avoid casting empty string to ObjectId)
+  if (shop === '' || shop === null || shop === undefined) {
+    shop = undefined;
+  }
 
   // If shop provided, ensure caller owns the shop or is admin
   if (shop) {
@@ -62,8 +67,12 @@ export const updateProduct = asyncHandler(async (req, res) => {
     }
   }
 
-  Object.keys(req.body).forEach(key => {
-    product[key] = req.body[key];
+  // sanitize incoming update payload to avoid casting empty shop
+  const updates = { ...req.body };
+  if (updates.shop === '' || updates.shop === null) delete updates.shop;
+
+  Object.keys(updates).forEach(key => {
+    product[key] = updates[key];
   });
 
   await product.save();

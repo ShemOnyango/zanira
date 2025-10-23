@@ -121,10 +121,11 @@ export const hasPermission = (permission) => {
         case 'super_admin':
           hasPerm = true;
           break;
-        case 'admin':
+        case 'admin': {
           const admin = await Admin.findOne({ user: req.user._id });
           hasPerm = admin?.permissions[permission] || false;
           break;
+        }
         case 'fundi':
           // Fundi-specific permissions can be added here
           hasPerm = ['view_profile', 'update_profile'].includes(permission);
@@ -183,24 +184,27 @@ export const optionalAuth = async (req, res, next) => {
 };
 
 // Check if user is verified
-export const requireVerification = (userType = 'all') => {
+export const requireVerification = (_userType = 'all') => {
   return async (req, res, next) => {
     try {
       let isVerified = false;
 
       switch (req.user.role) {
-        case 'fundi':
+        case 'fundi': {
           const fundi = await Fundi.findOne({ user: req.user._id });
           isVerified = fundi?.verification.overallStatus === 'verified';
           break;
-        case 'client':
+        }
+        case 'client': {
           const client = await Client.findOne({ user: req.user._id });
           isVerified = client?.idVerified || false;
           break;
-        case 'shop_owner':
+        }
+        case 'shop_owner': {
           const shop = await Shop.findOne({ user: req.user._id });
           isVerified = shop?.verification.overallStatus === 'verified';
           break;
+        }
         case 'admin':
         case 'super_admin':
           isVerified = true;

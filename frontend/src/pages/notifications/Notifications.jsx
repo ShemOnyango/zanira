@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import { useApi } from '../../hooks/useApi'
 import { notificationAPI } from '../../lib/api'
+import { bulkAPI, chatAPI } from '../../lib/api'
+import { useAuthStore } from '../../store/authStore'
 import { useSocket } from '../../contexts/SocketContext'
 import LoadingSpinner from '../../components/common/LoadingSpinner'
 import ErrorMessage from '../../components/common/ErrorMessage'
@@ -28,8 +30,13 @@ export default function Notifications() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState('all') // all, unread, read
+  const [activeTab, setActiveTab] = useState('inbox') // inbox or sent
+  const [sentItems, setSentItems] = useState([])
   const [showSettings, setShowSettings] = useState(false)
+  const [showSendModal, setShowSendModal] = useState(false)
+  const [showMessageModal, setShowMessageModal] = useState(false)
   const socket = useSocket()
+  const { user } = useAuthStore()
 
   // API hooks
   const { execute: fetchNotifications } = useApi(notificationAPI.getAll, { showToast: false })
@@ -37,6 +44,178 @@ export default function Notifications() {
   const { execute: markAllAsRead } = useApi(notificationAPI.markAllAsRead, { successMessage: 'All notifications marked as read' })
   const { execute: deleteNotification } = useApi(notificationAPI.delete, { successMessage: 'Notification deleted' })
   const { execute: updatePreferences } = useApi(notificationAPI.updatePreferences, { successMessage: 'Preferences updated' })
+  const { execute: sendBulkNotifications } = useApi(bulkAPI.notifications, { showToast: true })
+  const { execute: sendBulkEmails } = useApi(bulkAPI.emails, { showToast: true })
+  const { execute: createChat } = useApi(chatAPI.createChat, { showToast: true })
+
+  // Modal for sending targeted notifications (admin only)
+  const SendNotificationModal = ({ isOpen, onClose, onSend }) => {
+    const [recipientType, setRecipientType] = useState('all')
+    const [recipientIds, setRecipientIds] = useState('')
+    const [title, setTitle] = useState('')
+    const [message, setMessage] = useState('')
+    const [sending, setSending] = useState(false)
+
+    const handleSend = async () => {
+      try {
+        setSending(true)
+        if (!title || title.trim().length === 0) {
+          alert('Title is required');
+          setSending(false);
+          return;
+        }
+
+        const payload = {
+          title,
+          message,
+          recipientType: recipientType === 'specific' ? undefined : recipientType,
+          recipientIds: recipientType === 'specific' ? (recipientIds ? recipientIds.split(',').map(s => s.trim()) : []) : undefined,
+          // normalize to server-side enum-friendly values
+          notificationType: 'system_alert',
+          action: 'dismiss'
+        }
+        await onSend(payload)
+        onClose()
+      } catch (err) {
+        console.error('Failed to send notifications', err)
+      } finally {
+        setSending(false)
+      }
+    }
+
+    if (!isOpen) return null
+
+    return (
+      <Modal isOpen={isOpen} onClose={onClose} title="Send Notification" size="md">
+        <div className="space-y-4 p-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Target</label>
+            <select value={recipientType} onChange={(e) => setRecipientType(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300">
+              <option value="all">All Users</option>
+              <option value="fundi">Fundis</option>
+              <option value="client">Clients</option>
+              <option value="shop_owner">Shop Owners</option>
+              <option value="system">System Users</option>
+              <option value="specific">Specific User IDs (comma separated)</option>
+            </select>
+          </div>
+
+          {recipientType === 'specific' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Recipient IDs</label>
+              <input value={recipientIds} onChange={(e) => setRecipientIds(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300" placeholder="id1,id2,..." />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Title</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Message</label>
+            <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} className="mt-1 block w-full rounded-md border-gray-300" />
+          </div>
+
+          <div className="flex justify-end space-x-3">
+            <button onClick={onClose} className="px-4 py-2 bg-white border rounded">Cancel</button>
+            <button onClick={handleSend} disabled={sending} className="px-4 py-2 bg-blue-600 text-white rounded">{sending ? 'Sending...' : 'Send'}</button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
+
+  // Modal for creating a new chat or sending bulk email
+  const NewMessageModal = ({ isOpen, onClose, onCreateChat, onSendEmail }) => {
+    const [mode, setMode] = useState('chat') // chat or email
+    const [chatType, setChatType] = useState('group')
+    const [participants, setParticipants] = useState('')
+    const [initialMessage, setInitialMessage] = useState('')
+    const [subject, setSubject] = useState('')
+    const [htmlContent, setHtmlContent] = useState('')
+    const [sending, setSending] = useState(false)
+
+    const handleCreate = async () => {
+      try {
+        setSending(true)
+        if (mode === 'chat') {
+          const payload = {
+            chatType,
+            participants: participants ? participants.split(',').map(s => s.trim()) : undefined,
+            initialMessage
+          }
+          await onCreateChat(payload)
+        } else {
+          const payload = {
+            subject,
+            htmlContent,
+            recipientType: 'all' // allow choosing later; keep simple for now
+          }
+          await onSendEmail(payload)
+        }
+        onClose()
+      } catch (err) {
+        console.error('Failed to create chat/send email', err)
+      } finally {
+        setSending(false)
+      }
+    }
+
+    if (!isOpen) return null
+
+    return (
+      <Modal isOpen={isOpen} onClose={onClose} title="New Message / Email" size="md">
+        <div className="space-y-4 p-4">
+          <div className="flex items-center space-x-3">
+            <button onClick={() => setMode('chat')} className={`px-3 py-2 rounded ${mode === 'chat' ? 'bg-indigo-600 text-white' : 'bg-gray-100'}`}>Chat</button>
+            <button onClick={() => setMode('email')} className={`px-3 py-2 rounded ${mode === 'email' ? 'bg-indigo-600 text-white' : 'bg-gray-100'}`}>Email</button>
+          </div>
+
+          {mode === 'chat' ? (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Chat Type</label>
+                <select value={chatType} onChange={(e) => setChatType(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300">
+                  <option value="group">Group</option>
+                  <option value="direct">Direct</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Participants (user ids comma separated)</label>
+                <input value={participants} onChange={(e) => setParticipants(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300" placeholder="userId1,userId2" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Initial Message</label>
+                <textarea value={initialMessage} onChange={(e) => setInitialMessage(e.target.value)} rows={4} className="mt-1 block w-full rounded-md border-gray-300" />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Subject</label>
+                <input value={subject} onChange={(e) => setSubject(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">HTML Content</label>
+                <textarea value={htmlContent} onChange={(e) => setHtmlContent(e.target.value)} rows={6} className="mt-1 block w-full rounded-md border-gray-300" />
+              </div>
+            </>
+          )}
+
+          <div className="flex justify-end space-x-3">
+            <button onClick={onClose} className="px-4 py-2 bg-white border rounded">Cancel</button>
+            <button onClick={handleCreate} disabled={sending} className="px-4 py-2 bg-indigo-600 text-white rounded">{sending ? 'Sending...' : mode === 'chat' ? 'Create Chat' : 'Send Email'}</button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
+
+  // Hook up modals to API calls via existing useApi execute functions
+  // We'll render them below (inside the Notifications component render)
 
   // Load notifications
   useEffect(() => {
@@ -76,12 +255,18 @@ export default function Notifications() {
   // Socket.io for real-time notifications
   useEffect(() => {
     if (socket) {
-      socket.on('new_notification', (notification) => {
+      socket.on('notification:new', (notification) => {
         setNotifications(prev => [notification, ...prev])
+      })
+
+      // Admin summary for bulk sends
+      socket.on('bulk:notification:sent', (summary) => {
+        setSentItems(prev => [summary, ...prev])
       })
 
       return () => {
         socket.off('new_notification')
+        socket.off('bulk:notification:sent')
       }
     }
   }, [socket])
@@ -205,6 +390,25 @@ export default function Notifications() {
               <Check className="w-5 h-5" />
               <span>Mark All Read</span>
             </button>
+            {user && (user.role === 'admin' || user.role === 'super_admin') && (
+              <>
+                <button
+                  onClick={() => setShowSendModal(true)}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                >
+                  <Bell className="w-5 h-5" />
+                  <span>New Notification</span>
+                </button>
+
+                <button
+                  onClick={() => setShowMessageModal(true)}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2"
+                >
+                  <MessageSquare className="w-5 h-5" />
+                  <span>New Message/Email</span>
+                </button>
+              </>
+            )}
 
             <button
               onClick={() => setShowSettings(true)}
@@ -216,107 +420,159 @@ export default function Notifications() {
           </div>
         </div>
 
-        {/* Filters */}
+        {/* Tabs */}
         <div className="bg-white rounded-2xl shadow-soft p-6 mb-8">
           <div className="flex space-x-4">
-            {['all', 'unread', 'read'].map((filterType) => (
+            <button
+              onClick={() => setActiveTab('inbox')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium ${activeTab === 'inbox' ? 'bg-teal-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+              Inbox
+            </button>
+            {user && (user.role === 'admin' || user.role === 'super_admin') && (
               <button
-                key={filterType}
-                onClick={() => setFilter(filterType)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
-                  filter === filterType
-                    ? 'bg-teal-500 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {filterType} ({filterType === 'all' ? notifications.length : 
-                              filterType === 'unread' ? notifications.filter(n => !n.read).length :
-                              notifications.filter(n => n.read).length})
+                onClick={() => setActiveTab('sent')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${activeTab === 'sent' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                Sent ({sentItems.length})
               </button>
-            ))}
+            )}
           </div>
+        </div>
+
+        {/* Filters (only when showing inbox) */}
+        <div className="bg-white rounded-2xl shadow-soft p-6 mb-8">
+          {activeTab === 'inbox' && (
+            <div className="flex space-x-4">
+              {['all', 'unread', 'read'].map((filterType) => (
+                <button
+                  key={filterType}
+                  onClick={() => setFilter(filterType)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
+                    filter === filterType
+                      ? 'bg-teal-500 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {filterType} ({filterType === 'all' ? notifications.length : 
+                                filterType === 'unread' ? notifications.filter(n => !n.read).length :
+                                notifications.filter(n => n.read).length})
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Notifications List */}
         <div className="bg-white rounded-2xl shadow-soft">
-          {filteredNotifications.length === 0 ? (
-            <div className="text-center py-16">
-              <Bell className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No notifications</h3>
-              <p className="text-gray-600">
-                {filter === 'all' 
-                  ? "You're all caught up!" 
-                  : `No ${filter} notifications`
-                }
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-200">
-              {filteredNotifications.map((notification) => {
-                const Icon = getNotificationIcon(notification.type)
-                
-                return (
-                  <div
-                    key={notification._id}
-                    className={`p-6 transition-colors ${
-                      !notification.read ? 'bg-blue-50' : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    <div className="flex items-start space-x-4">
-                      {/* Icon */}
-                      <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${getNotificationColor(notification.type)}`}>
-                        <Icon className="w-6 h-6" />
-                      </div>
-
-                      {/* Content */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between mb-2">
-                          <h3 className="font-semibold text-gray-900">
-                            {notification.title}
-                          </h3>
-                          <span className="text-sm text-gray-500 whitespace-nowrap ml-4">
-                            {formatRelativeTime(notification.createdAt)}
-                          </span>
+          {activeTab === 'inbox' ? (
+            filteredNotifications.length === 0 ? (
+              <div className="text-center py-16">
+                <Bell className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No notifications</h3>
+                <p className="text-gray-600">
+                  {filter === 'all' 
+                    ? "You're all caught up!" 
+                    : `No ${filter} notifications`
+                  }
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-200">
+                {filteredNotifications.map((notification) => {
+                  const Icon = getNotificationIcon(notification.type)
+                  
+                  return (
+                    <div
+                      key={notification._id}
+                      className={`p-6 transition-colors ${
+                        !notification.read ? 'bg-blue-50' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-start space-x-4">
+                        {/* Icon */}
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${getNotificationColor(notification.type)}`}>
+                          <Icon className="w-6 h-6" />
                         </div>
 
-                        <p className="text-gray-700 mb-3">
-                          {notification.message}
-                        </p>
+                        {/* Content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between mb-2">
+                            <h3 className="font-semibold text-gray-900">
+                              {notification.title}
+                            </h3>
+                            <span className="text-sm text-gray-500 whitespace-nowrap ml-4">
+                              {formatRelativeTime(notification.createdAt)}
+                            </span>
+                          </div>
 
-                        {/* Actions */}
-                        <div className="flex items-center space-x-4">
-                          {!notification.read && (
+                          <p className="text-gray-700 mb-3">
+                            {notification.message}
+                          </p>
+
+                          {/* Actions */}
+                          <div className="flex items-center space-x-4">
+                            {!notification.read && (
+                              <button
+                                onClick={() => handleMarkAsRead(notification._id)}
+                                className="text-teal-600 hover:text-teal-700 text-sm font-medium flex items-center space-x-1"
+                              >
+                                <Check className="w-4 h-4" />
+                                <span>Mark as read</span>
+                              </button>
+                            )}
+
+                            {notification.actionUrl && (
+                              <a
+                                href={notification.actionUrl}
+                                className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                              >
+                                View details
+                              </a>
+                            )}
+
                             <button
-                              onClick={() => handleMarkAsRead(notification._id)}
-                              className="text-teal-600 hover:text-teal-700 text-sm font-medium flex items-center space-x-1"
+                              onClick={() => handleDelete(notification._id)}
+                              className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center space-x-1"
                             >
-                              <Check className="w-4 h-4" />
-                              <span>Mark as read</span>
+                              <Trash2 className="w-4 h-4" />
+                              <span>Delete</span>
                             </button>
-                          )}
-
-                          {notification.actionUrl && (
-                            <a
-                              href={notification.actionUrl}
-                              className="text-blue-600 hover:text-blue-700 text-sm font-medium"
-                            >
-                              View details
-                            </a>
-                          )}
-
-                          <button
-                            onClick={() => handleDelete(notification._id)}
-                            className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center space-x-1"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            <span>Delete</span>
-                          </button>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
+            )
+          ) : (
+            // Sent tab
+            <div className="p-6">
+              {sentItems.length === 0 ? (
+                <div className="text-center py-8">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No sent notifications yet</h3>
+                  <p className="text-gray-600">Send a bulk notification to see it listed here.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {sentItems.map((s, idx) => (
+                    <div key={idx} className="p-4 border rounded-lg">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="text-sm text-gray-500">Sent at: {new Date().toLocaleString()}</div>
+                          <div className="font-semibold text-gray-900">Total: {s.total} — Successful: {s.successful} — Failed: {s.failed}</div>
+                        </div>
+                        <div className="text-sm text-gray-600">Results: {s.results?.length || 0}</div>
+                      </div>
+                      {s.results && (
+                        <details className="mt-3">
+                          <summary className="text-sm text-indigo-600 cursor-pointer">View results</summary>
+                          <pre className="text-xs mt-2 overflow-auto max-h-40 bg-gray-50 p-2 rounded">{JSON.stringify(s.results, null, 2)}</pre>
+                        </details>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -336,6 +592,30 @@ export default function Notifications() {
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
         onSave={updatePreferences}
+      />
+
+      {/* Send Notification Modal (admin) */}
+      <SendNotificationModal
+        isOpen={showSendModal}
+        onClose={() => setShowSendModal(false)}
+        onSend={async (payload) => {
+          // payload should include title, message, recipientType or recipientIds
+          await sendBulkNotifications(payload)
+        }}
+      />
+
+      {/* New Message / Email Modal (admin) */}
+      <NewMessageModal
+        isOpen={showMessageModal}
+        onClose={() => setShowMessageModal(false)}
+        onCreateChat={async (payload) => {
+          // payload: { chatType, participants, initialMessage }
+          await createChat(payload)
+        }}
+        onSendEmail={async (payload) => {
+          // payload: { subject, htmlContent, recipientType }
+          await sendBulkEmails(payload)
+        }}
       />
     </div>
   )

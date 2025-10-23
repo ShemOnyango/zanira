@@ -23,8 +23,7 @@ const bookingSchema = new mongoose.Schema({
   },
   fundi: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Fundi',
-    required: true
+    ref: 'Fundi'
   },
   admin: {
     type: mongoose.Schema.Types.ObjectId,
@@ -209,7 +208,25 @@ const bookingSchema = new mongoose.Schema({
     phone: String
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
+
+// Virtual for total amount (agreedPrice if set, otherwise fallback to service basePrice if populated)
+bookingSchema.virtual('totalAmount').get(function() {
+  // Use agreedPrice when it's a valid number > 0
+  const ap = this.agreedPrice;
+  const agreed = (typeof ap === 'number') ? ap : (ap ? Number(ap) : NaN);
+  if (Number.isFinite(agreed) && agreed > 0) return agreed;
+
+  // If service is populated and has a basePrice, use it
+  const svc = this.service;
+  const svcBase = svc && (typeof svc.basePrice === 'number' ? svc.basePrice : (svc.basePrice ? Number(svc.basePrice) : NaN));
+  if (Number.isFinite(svcBase) && svcBase > 0) return svcBase;
+
+  // Default to 0
+  return 0;
 });
 
 // Indexes
@@ -239,15 +256,18 @@ bookingSchema.virtual('isActive').get(function() {
   return ['confirmed', 'scheduled', 'in_progress'].includes(this.status);
 });
 
-// Pre-save middleware to generate booking ID and calculate earnings
-bookingSchema.pre('save', function(next) {
-  // Generate unique booking ID
-  if (this.isNew) {
+// Pre-validate middleware to generate booking ID so it exists before Mongoose runs required validation
+bookingSchema.pre('validate', function(next) {
+  if (this.isNew && !this.bookingId) {
     const timestamp = Date.now().toString().slice(-6);
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
     this.bookingId = `ZB${timestamp}${random}`;
   }
+  next();
+});
 
+// Pre-save middleware to calculate earnings and update workflow
+bookingSchema.pre('save', function(next) {
   // Calculate platform fee and fundi earnings
   if (this.isModified('agreedPrice') || this.isModified('commissionRate')) {
     this.platformFee = (this.agreedPrice * this.commissionRate) / 100;

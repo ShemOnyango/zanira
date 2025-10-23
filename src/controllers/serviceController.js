@@ -507,3 +507,34 @@ export const searchServices = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Get fundis offering a specific service
+// @route   GET /api/v1/services/:id/fundis
+// @access  Public
+export const getFundisForService = async (req, res, next) => {
+  try {
+    const serviceId = req.params.id;
+    const { county, town, limit = 20 } = req.query;
+
+    const filter = {
+      'servicesOffered.service': serviceId,
+      'verification.overallStatus': 'verified',
+      availability: 'available'
+    };
+
+    if (county) filter['location.county'] = county;
+    if (town) filter['location.town'] = town;
+
+    const fundis = await Fundi.find(filter)
+      .populate('user', 'firstName lastName profilePhoto county town rating')
+      .populate('servicesOffered.service')
+      .limit(parseInt(limit));
+
+    res.status(200).json({
+      success: true,
+      data: fundis.map(f => ({ ...f.toObject(), user: sanitizeUser(f.user) }))
+    });
+  } catch (error) {
+    next(error);
+  }
+};

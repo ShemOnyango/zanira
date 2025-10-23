@@ -5,11 +5,12 @@ import Fundi from '../models/Fundi.js';
 import Client from '../models/Client.js';
 import Shop from '../models/Shop.js';
 import Verification from '../models/Verification.js';
-import ServiceCategory from '../models/ServiceCategory.js';
+// import ServiceCategory from '../models/ServiceCategory.js';
 import EscrowAccount from '../models/EscrowAccount.js';
 import SystemConfig from '../models/SystemConfig.js';
 import Role from '../models/Role.js';
 import Notification from '../models/Notification.js';
+import Admin from '../models/Admin.js';
 import logger from '../middleware/logger.js';
 
 // @desc    Get admin dashboard statistics
@@ -20,9 +21,9 @@ export const getDashboardStats = async (req, res, next) => {
     // Get time ranges for analytics
     const today = new Date();
     const startOfToday = new Date(today.setHours(0, 0, 0, 0));
-    const startOfWeek = new Date(today.setDate(today.getDate() - today.getDay()));
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const startOfYear = new Date(today.getFullYear(), 0, 1);
+    //const startOfWeek = new Date(today.setDate(today.getDate() - today.getDay()));
+    //const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    //const startOfYear = new Date(today.getFullYear(), 0, 1);
 
     // User statistics
     const totalUsers = await User.countDocuments();
@@ -440,7 +441,7 @@ export const requestAdditionalInfo = async (req, res, next) => {
   try {
     const { message } = req.body;
     const verificationId = req.params.id;
-    const adminId = req.user._id;
+    // const adminId = req.user._id;
 
     const verification = await Verification.findById(verificationId)
       .populate('applicant');
@@ -817,13 +818,22 @@ export const updateSystemConfig = async (req, res, next) => {
   try {
     const incoming = req.body || {};
 
+    // Prevent clients from sending internal fields (like _id, __v) or unexpected keys
+    // Only allow the top-level config sections defined in the schema
+    const allowedSections = ['general', 'security', 'notifications', 'payments', 'email', 'database'];
+    const sanitized = {};
+    allowedSections.forEach((k) => {
+      if (Object.prototype.hasOwnProperty.call(incoming, k)) sanitized[k] = incoming[k];
+    });
+
     let config = await SystemConfig.findOne();
     if (!config) {
-      config = new SystemConfig(incoming);
+      // create new config using only sanitized sections
+      config = new SystemConfig(sanitized);
     } else {
-      // shallow merge by top-level sections
-      Object.keys(incoming).forEach(key => {
-        config[key] = { ...(config[key] || {}), ...(incoming[key] || {}) };
+      // shallow merge by top-level allowed sections
+      Object.keys(sanitized).forEach((key) => {
+        config[key] = { ...(config[key] || {}), ...(sanitized[key] || {}) };
       });
       config.updatedAt = new Date();
     }

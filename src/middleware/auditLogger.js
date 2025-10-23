@@ -104,7 +104,7 @@ function extractTargetEntity(req) {
   };
 }
 
-function extractChanges(req, res) {
+function extractChanges(req, _res) {
   if (req.method === 'PUT' || req.method === 'PATCH') {
     return {
       before: req.body.oldData || {},

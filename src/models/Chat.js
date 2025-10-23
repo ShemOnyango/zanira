@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { normalizeRole } from '../utils/roleUtils.js';
 
 const chatSchema = new mongoose.Schema({
   // Chat Identification
@@ -22,8 +23,13 @@ const chatSchema = new mongoose.Schema({
     },
     role: {
       type: String,
-      enum: ['client', 'fundi', 'admin', 'shop_owner'],
-      required: true
+      // Accept common legacy aliases to avoid validation errors on older documents.
+      enum: ['client', 'fundi', 'admin', 'shop_owner', 'super_admin', 'system', 'secretary'],
+      required: true,
+      set: function(val) {
+        // Normalize role-like strings (e.g., 'super_admin' -> 'admin')
+        return normalizeRole(val);
+      }
     },
     joinedAt: {
       type: Date,
@@ -225,6 +231,18 @@ chatSchema.pre('save', function(next) {
         this.unreadCount.set(participant.user.toString(), currentCount + 1);
       }
     });
+  }
+  next();
+});
+
+// Pre-validate: normalize any participant role strings to canonical enums to avoid
+// Mongoose enum validation failures for legacy/alias values like 'super_admin'.
+chatSchema.pre('validate', function(next) {
+  if (Array.isArray(this.participants)) {
+    this.participants = this.participants.map(p => ({
+      ...p,
+      role: normalizeRole(p.role)
+    }));
   }
   next();
 });

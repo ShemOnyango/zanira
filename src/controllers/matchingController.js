@@ -2,7 +2,7 @@
 import matchingService from '../services/matchingService.js';
 import Booking from '../models/Booking.js';
 import Fundi from '../models/Fundi.js';
-import User from '../models/User.js';
+// import User from '../models/User.js';
 import ServiceCategory from '../models/ServiceCategory.js';
 import asyncHandler from 'express-async-handler';
 import logger from '../middleware/logger.js';
@@ -606,7 +606,7 @@ function calculateAcceptanceRate(fundi) {
 // Calculate overall match score for fundi
 async function calculateOverallMatchScore(fundi) {
   // This would be a comprehensive score based on fundi's profile and performance
-  const baseScore = fundi.stats.rating * 20 || 50; // Convert 5-star to 100 scale
+  let baseScore = fundi.stats.rating * 20 || 50; // Convert 5-star to 100 scale
 
   // Bonus for verification
   if (fundi.verificationStatus === 'verified') {

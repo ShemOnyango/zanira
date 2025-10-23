@@ -1,5 +1,5 @@
 import Shop from '../models/Shop.js';
-import User from '../models/User.js';
+// import User from '../models/User.js';
 import Payment from '../models/Payment.js';
 import AuditLog from '../models/AuditLog.js';
 import logger from '../middleware/logger.js';
@@ -182,7 +182,7 @@ export const updateShop = async (req, res, next) => {
     const updateFields = [
       'shopName', 'description', 'location', 'contactPhone', 'contactEmail',
       'website', 'socialMedia', 'operatingHours', 'pricingTier',
-      'paymentMethods', 'mpesaPaybill', 'bankAccount'
+      'paymentMethods', 'mpesaPaybill', 'bankAccount', 'commissionRate'
     ];
 
     const changesBefore = {};

@@ -34,6 +34,7 @@ import RoleManagement from './pages/admin/RoleManagement'
 import ProductManagement from './pages/admin/ProductManagement'
 import BulkOperations from './pages/admin/BulkOperations'
 import AdvancedReporting from './pages/admin/AdvancedReporting'
+import AdminServices from './pages/admin/AdminServices'
 import SystemConfiguration from './pages/admin/SystemConfiguration'
 
 import BookingCreate from './pages/bookings/BookingCreate'
@@ -51,6 +52,7 @@ import ShopDashboard from './pages/shops/ShopDashboard'
 import CreateShop from './pages/shops/CreateShop'
 
 import NotFound from './pages/NotFound'
+import Unauthorized from './pages/Unauthorized'
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, isAuthenticated } = useAuthStore()
@@ -59,12 +61,20 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     return <Navigate to="/login" replace />
   }
 
-  // If the user object exists but doesn't have a role yet, allow rendering
-  // children while a downstream router (DashboardRouter) may attempt to fetch
-  // full profile. This prevents an immediate redirect back to '/' when role
-  // is temporarily missing in persisted state.
-  if (allowedRoles && !allowedRoles.includes(user?.role)) {
-    return <Navigate to="/unauthorized" replace />
+  // If allowedRoles is provided but the authenticated user hasn't loaded
+  // their full profile (role may be undefined while the client fetches /auth/me),
+  // allow rendering the children so downstream components can complete the
+  // profile load. This prevents accidental redirects to a non-existent
+  // /unauthorized route during initial hydration.
+  if (allowedRoles) {
+    // If user role not yet available but user is authenticated, allow through
+    if (!user?.role) {
+      return children
+    }
+
+    if (!allowedRoles.includes(user.role)) {
+      return <Navigate to="/unauthorized" replace />
+    }
   }
 
   return children
@@ -251,6 +261,7 @@ function App() {
           }
         >
           <Route index element={<AdminDashboard />} />
+          <Route path="analytics" element={<EnhancedAnalytics />} />
           <Route path="chat" element={<ChatManagement />} />
           <Route path="price-negotiation" element={<PriceNegotiation />} />
           <Route path="shop-verification" element={<ShopVerification />} />
@@ -258,15 +269,16 @@ function App() {
           <Route path="testimonials" element={<TestimonialModeration />} />
           <Route path="fundi-allocation" element={<FundiAllocation />} />
           <Route path="material-receipts" element={<MaterialReceiptTracking />} />
-          <Route path="analytics" element={<EnhancedAnalytics />} />
           <Route path="roles" element={<RoleManagement />} />
           <Route path="products" element={<ProductManagement />} />
           <Route path="bulk-operations" element={<BulkOperations />} />
           <Route path="reports" element={<AdvancedReporting />} />
+          <Route path= 'services' element= {<AdminServices />} />
           <Route path="system" element={<SystemConfiguration />} />
         </Route>
 
-        <Route path="*" element={<NotFound />} />
+  <Route path="unauthorized" element={<Unauthorized />} />
+  <Route path="*" element={<NotFound />} />
       </Route>
       </Routes>
     </SocketProvider>

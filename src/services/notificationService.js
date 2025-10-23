@@ -1,8 +1,10 @@
 import admin from 'firebase-admin';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
-import { sendEmail, emailTemplates } from '../utils/emailUtils.js';
+import { sendEmail } from '../utils/emailUtils.js';
 import logger from '../middleware/logger.js';
+import { getSocketService } from './socketAccessor.js';
+import { normalizeRole, resolveRecipientType } from '../utils/roleUtils.js';
 
 // Initialize Firebase Admin (safe guard for missing env vars in dev)
 const initializeFirebase = () => {
@@ -88,10 +90,13 @@ class NotificationService {
         priority = 'normal'
       } = notificationData;
 
+      // Ensure recipientType is normalized to allowed enum values
+      const resolvedRecipientType = resolveRecipientType(recipientType) || normalizeRole((await User.findById(recipient)).role);
+
       // Create in-app notification
       const notification = await Notification.create({
         recipient,
-        recipientType,
+        recipientType: resolvedRecipientType,
         title,
         message,
         notificationType,
@@ -100,6 +105,16 @@ class NotificationService {
         data,
         priority
       });
+
+      // Emit real-time in-app notification to recipient if socket service is available
+      try {
+        const socketService = getSocketService();
+        if (socketService && socketService.io) {
+          socketService.io.to(String(recipient)).emit('notification:new', notification);
+        }
+      } catch (emitErr) {
+        logger.warn('Failed to emit notification:new from notificationService', emitErr.message);
+      }
 
       // Send through configured channels
       const results = {};
@@ -257,7 +272,7 @@ class NotificationService {
 
   // Get appropriate email template for notification type
   getEmailTemplate(notification) {
-    const user = { firstName: 'User', lastName: '' }; // Would be populated from user data
+    //const user = { firstName: 'User', lastName: '' }; // Would be populated from user data
     
     const templates = {
       booking_created: {
@@ -335,10 +350,12 @@ class NotificationService {
 
     for (const user of users) {
       try {
+        // Ensure recipientType uses canonical enum
+        const resolvedRecipientType = resolveRecipientType(notificationData.recipientType) || normalizeRole(user.role);
         const result = await this.sendNotification({
           ...notificationData,
           recipient: user._id || user,
-          recipientType: user.role || notificationData.recipientType
+          recipientType: resolvedRecipientType
         });
         results.push({ userId: user._id || user, success: true, result });
       } catch (error) {
