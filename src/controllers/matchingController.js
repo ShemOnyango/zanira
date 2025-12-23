@@ -2,15 +2,63 @@
 import matchingService from '../services/matchingService.js';
 import Booking from '../models/Booking.js';
 import Fundi from '../models/Fundi.js';
-// import User from '../models/User.js';
 import ServiceCategory from '../models/ServiceCategory.js';
 import asyncHandler from 'express-async-handler';
 import logger from '../middleware/logger.js';
+import redisClient from '../config/redis.js';
+import Joi from 'joi';
+
+// Validation schema
+const matchingSchema = Joi.object({
+  serviceCategory: Joi.string().required(),
+  description: Joi.string().required(),
+  location: Joi.object({
+    county: Joi.string().required(),
+    constituency: Joi.string().optional(),
+    town: Joi.string().optional(),
+    street: Joi.string().optional(),
+    coordinates: Joi.object({
+      latitude: Joi.number().min(-90).max(90),
+      longitude: Joi.number().min(-180).max(180)
+    }).optional()
+  }).required(),
+  budget: Joi.object({
+    min: Joi.number().min(0),
+    max: Joi.number().min(0)
+  }).optional(),
+  preferredDate: Joi.date().optional(),
+  preferredTime: Joi.string().optional(),
+  urgency: Joi.string().valid('low', 'normal', 'high', 'emergency').default('normal'),
+  maxResults: Joi.number().min(1).max(50).default(10),
+  minRating: Joi.number().min(0).max(5).default(3.0),
+  maxDistance: Joi.number().min(1).max(500).default(50),
+  considerAvailability: Joi.boolean().default(true),
+  enableFallback: Joi.boolean().default(true),
+  fallbackStrategy: Joi.string().valid('auto', 'strict', 'relaxed').default('auto'),
+  preferences: Joi.object({
+    weights: Joi.object({
+      location: Joi.number().min(0).max(1),
+      rating: Joi.number().min(0).max(1),
+      expertise: Joi.number().min(0).max(1),
+      responseTime: Joi.number().min(0).max(1),
+      availability: Joi.number().min(0).max(1),
+      price: Joi.number().min(0).max(1),
+      completionRate: Joi.number().min(0).max(1)
+    }).optional()
+  }).optional()
+});
 
 // @desc    Find matching fundis for a job
 // @route   POST /api/v1/matching/find-fundis
 // @access  Private/Client,Admin
 export const findMatchingFundis = asyncHandler(async (req, res) => {
+  // Validate request body
+  const { error, value } = matchingSchema.validate(req.body);
+  if (error) {
+    res.status(400);
+    throw new Error(`Validation error: ${error.details[0].message}`);
+  }
+
   const {
     serviceCategory,
     description,
@@ -22,14 +70,11 @@ export const findMatchingFundis = asyncHandler(async (req, res) => {
     maxResults = 10,
     minRating = 3.0,
     maxDistance = 50,
-    considerAvailability = true
-  } = req.body;
-
-  // Validate required fields
-  if (!serviceCategory || !description || !location) {
-    res.status(400);
-    throw new Error('Service category, description, and location are required');
-  }
+    considerAvailability = true,
+    enableFallback = true,
+    fallbackStrategy = 'auto',
+    preferences = {}
+  } = value;
 
   // Validate service category exists
   const service = await ServiceCategory.findById(serviceCategory);
@@ -38,15 +83,9 @@ export const findMatchingFundis = asyncHandler(async (req, res) => {
     throw new Error('Service category not found');
   }
 
-  // Validate location structure
-  if (!location.county) {
-    res.status(400);
-    throw new Error('Location must include county');
-  }
-
   // Create job object for matching
   const job = {
-    _id: `temp_${Date.now()}`, // Temporary ID for matching
+    _id: `temp_${Date.now()}`,
     serviceCategory,
     description,
     location: {
@@ -63,7 +102,8 @@ export const findMatchingFundis = asyncHandler(async (req, res) => {
     preferredDate: preferredDate ? new Date(preferredDate) : null,
     preferredTime: preferredTime || null,
     urgency,
-    client: req.user._id
+    client: req.user._id,
+    preferences
   };
 
   // Set matching options
@@ -71,15 +111,17 @@ export const findMatchingFundis = asyncHandler(async (req, res) => {
     maxResults: parseInt(maxResults),
     minRating: parseFloat(minRating),
     maxDistance: parseInt(maxDistance),
-    considerAvailability: considerAvailability === 'true'
+    considerAvailability: considerAvailability === true || considerAvailability === 'true',
+    enableFallback: enableFallback === true || enableFallback === 'true',
+    fallbackStrategy
   };
 
   try {
     // Find matching fundis
-    const matches = await matchingService.findBestFundis(job, matchingOptions);
+    const matchingResult = await matchingService.findBestFundis(job, matchingOptions);
 
     // Format response
-    const formattedMatches = matches.map(match => ({
+    const formattedMatches = matchingResult.matches.map(match => ({
       fundi: {
         _id: match.fundi._id,
         user: {
@@ -96,9 +138,10 @@ export const findMatchingFundis = asyncHandler(async (req, res) => {
         yearsOfExperience: match.fundi.yearsOfExperience,
         verificationStatus: match.fundi.verificationStatus,
         isPremium: match.fundi.isPremium,
-        portfolio: match.fundi.portfolio?.slice(0, 3) || [] // First 3 portfolio items
+        portfolio: match.fundi.portfolio?.slice(0, 3) || [],
+        availability: match.fundi.availability
       },
-      score: Math.round(match.score * 100) / 100, // Round to 2 decimal places
+      score: Math.round(match.score * 100) / 100,
       breakdown: {
         location: Math.round(match.breakdown.location),
         rating: Math.round(match.breakdown.rating),
@@ -108,16 +151,18 @@ export const findMatchingFundis = asyncHandler(async (req, res) => {
         price: Math.round(match.breakdown.price),
         completionRate: Math.round(match.breakdown.completionRate)
       },
+      matchQuality: match.matchQuality,
       estimatedPrice: getEstimatedPrice(match.fundi, service),
       distance: calculateDistanceForDisplay(job.location, match.fundi.user)
     }));
 
-    // Log matching activity for analytics
-    logger.info('Matching completed', {
+    // Log matching activity
+    logger.info('Matching completed with fallback', {
       jobId: job._id,
       clientId: req.user._id,
       serviceCategory,
       matchesFound: formattedMatches.length,
+      fallbackStrategy: matchingResult.fallbackUsed,
       topScore: formattedMatches[0]?.score || 0
     });
 
@@ -132,6 +177,11 @@ export const findMatchingFundis = asyncHandler(async (req, res) => {
         },
         matches: formattedMatches,
         matchingCriteria: matchingOptions,
+        fallbackInfo: {
+          strategyUsed: matchingResult.fallbackUsed,
+          totalAvailable: matchingResult.totalAvailable,
+          message: getFallbackMessage(matchingResult.fallbackUsed)
+        },
         totalMatches: formattedMatches.length,
         timestamp: new Date()
       }
@@ -193,7 +243,7 @@ export const emergencyMatch = asyncHandler(async (req, res) => {
       min: service.minPrice || 0,
       max: service.maxPrice || 100000
     },
-    preferredDate: preferredDate ? new Date(preferredDate) : new Date(), // Today for emergency
+    preferredDate: preferredDate ? new Date(preferredDate) : new Date(),
     preferredTime: preferredTime || 'ASAP',
     urgency: 'emergency',
     client: req.user._id
@@ -201,12 +251,12 @@ export const emergencyMatch = asyncHandler(async (req, res) => {
 
   try {
     // Find emergency match
-    const emergencyFundi = await matchingService.emergencyMatch(job, {
+    const emergencyResult = await matchingService.emergencyMatch(job, {
       maxDistance: parseInt(maxDistance),
       minRating: parseFloat(minRating)
     });
 
-    if (!emergencyFundi) {
+    if (!emergencyResult?.fundi) {
       return res.status(404).json({
         success: false,
         error: 'No available fundis found for emergency service. Please try normal matching or contact support.',
@@ -215,6 +265,8 @@ export const emergencyMatch = asyncHandler(async (req, res) => {
         }
       });
     }
+
+    const emergencyFundi = emergencyResult.fundi;
 
     // Calculate emergency score
     const emergencyScore = await calculateEmergencyScore(emergencyFundi, job);
@@ -229,7 +281,7 @@ export const emergencyMatch = asyncHandler(async (req, res) => {
           profilePhoto: emergencyFundi.user.profilePhoto,
           county: emergencyFundi.user.county,
           town: emergencyFundi.user.town,
-          phone: emergencyFundi.user.phone // Include phone for emergency
+          phone: emergencyFundi.user.phone
         },
         specialty: emergencyFundi.specialty,
         rating: emergencyFundi.stats.rating,
@@ -244,20 +296,19 @@ export const emergencyMatch = asyncHandler(async (req, res) => {
       estimatedPrice: getEstimatedPrice(emergencyFundi, service),
       distance: calculateDistanceForDisplay(job.location, emergencyFundi.user),
       estimatedArrival: calculateEstimatedArrival(emergencyFundi, job),
-      contactInstructions: generateEmergencyContactInstructions(emergencyFundi)
+      contactInstructions: generateEmergencyContactInstructions(emergencyFundi),
+      fallbackUsed: emergencyResult.fallbackUsed
     };
 
-    // Log emergency match for monitoring
+    // Log emergency match
     logger.info('Emergency match completed', {
       jobId: job._id,
       clientId: req.user._id,
       fundiId: emergencyFundi._id,
       emergencyScore,
-      estimatedArrival: emergencyMatch.estimatedArrival
+      estimatedArrival: emergencyMatch.estimatedArrival,
+      fallbackUsed: emergencyResult.fallbackUsed
     });
-
-    // TODO: Send immediate notification to fundi about emergency job
-    // await notificationService.createEmergencyJobNotification(emergencyFundi.user._id, job);
 
     res.status(200).json({
       success: true,
@@ -282,6 +333,64 @@ export const emergencyMatch = asyncHandler(async (req, res) => {
 
     res.status(500);
     throw new Error('Emergency matching failed. Please contact support directly.');
+  }
+});
+
+// @desc    Locality fallback matching
+// @route   POST /api/v1/matching/locality-fallback
+// @access  Private/Client,Admin
+export const getLocalityFallback = asyncHandler(async (req, res) => {
+  const { serviceCategory, county, limit = 10 } = req.body;
+
+  if (!serviceCategory || !county) {
+    res.status(400);
+    throw new Error('Service category and county are required');
+  }
+
+  const job = {
+    serviceCategory,
+    location: { county }
+  };
+
+  try {
+    const fallbackFundis = await matchingService.getLocalityFallbackFundis(job, limit);
+    
+    const formattedFundis = fallbackFundis.map(fundi => ({
+      fundi: {
+        _id: fundi._id,
+        user: {
+          _id: fundi.user._id,
+          name: `${fundi.user.firstName} ${fundi.user.lastName}`,
+          profilePhoto: fundi.user.profilePhoto,
+          county: fundi.user.county,
+          town: fundi.user.town
+        },
+        rating: fundi.stats.rating,
+        completedJobs: fundi.stats.completedJobs,
+        yearsOfExperience: fundi.yearsOfExperience,
+        verificationStatus: fundi.verificationStatus,
+        availability: fundi.availability,
+        responseTime: fundi.stats.responseTime
+      },
+      isFallback: true,
+      localityMatch: true,
+      score: 50 // Base score for fallback matches
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        fundis: formattedFundis,
+        message: `Found ${formattedFundis.length} fundis in ${county} county`,
+        fallback: true,
+        total: formattedFundis.length
+      }
+    });
+
+  } catch (error) {
+    logger.error('Locality fallback error:', error);
+    res.status(500);
+    throw new Error('Failed to find locality fallback fundis');
   }
 });
 
@@ -312,45 +421,16 @@ export const updateMatchingPreferences = asyncHandler(async (req, res) => {
   // Update preferences
   const updateData = {};
 
-  if (operatingCounties !== undefined) {
-    updateData.operatingCounties = operatingCounties;
-  }
-
-  if (operatingTowns !== undefined) {
-    updateData.operatingTowns = operatingTowns;
-  }
-
-  if (workingHours !== undefined) {
-    updateData.workingHours = workingHours;
-  }
-
-  if (workingDays !== undefined) {
-    updateData.workingDays = workingDays;
-  }
-
-  if (unavailableDates !== undefined) {
-    updateData.unavailableDates = unavailableDates.map(date => new Date(date));
-  }
-
-  if (preferredJobTypes !== undefined) {
-    updateData.preferredJobTypes = preferredJobTypes;
-  }
-
-  if (maxDistance !== undefined) {
-    updateData.maxDistance = parseInt(maxDistance);
-  }
-
-  if (minJobValue !== undefined) {
-    updateData.minJobValue = parseFloat(minJobValue);
-  }
-
-  if (autoAcceptJobs !== undefined) {
-    updateData.autoAcceptJobs = autoAcceptJobs === 'true';
-  }
-
-  if (emergencyService !== undefined) {
-    updateData.emergencyService = emergencyService === 'true';
-  }
+  if (operatingCounties !== undefined) updateData.operatingCounties = operatingCounties;
+  if (operatingTowns !== undefined) updateData.operatingTowns = operatingTowns;
+  if (workingHours !== undefined) updateData.workingHours = workingHours;
+  if (workingDays !== undefined) updateData.workingDays = workingDays;
+  if (unavailableDates !== undefined) updateData.unavailableDates = unavailableDates.map(date => new Date(date));
+  if (preferredJobTypes !== undefined) updateData.preferredJobTypes = preferredJobTypes;
+  if (maxDistance !== undefined) updateData.maxDistance = parseInt(maxDistance);
+  if (minJobValue !== undefined) updateData.minJobValue = parseFloat(minJobValue);
+  if (autoAcceptJobs !== undefined) updateData.autoAcceptJobs = autoAcceptJobs === 'true';
+  if (emergencyService !== undefined) updateData.emergencyService = emergencyService === 'true';
 
   // Update fundi preferences
   const updatedFundi = await Fundi.findByIdAndUpdate(
@@ -359,7 +439,19 @@ export const updateMatchingPreferences = asyncHandler(async (req, res) => {
     { new: true, runValidators: true }
   ).populate('user', 'name email phone county town coordinates');
 
-  // Log preference update
+  // Clear cache for this fundi (if Redis enabled)
+  if (redisClient) {
+    try {
+      const pattern = `matches:*`;
+      const keys = await redisClient.keys(pattern);
+      if (keys && keys.length > 0) {
+        await redisClient.del(...keys);
+      }
+    } catch (cacheErr) {
+      logger.warn('Failed to clear redis cache after updating fundi preferences', { error: cacheErr.message });
+    }
+  }
+
   logger.info('Fundi matching preferences updated', {
     fundiId: fundi._id,
     updates: Object.keys(updateData)
@@ -468,9 +560,6 @@ export const adminForceMatch = asyncHandler(async (req, res) => {
     reason
   });
 
-  // TODO: Send notifications to both fundi and client
-  // await notificationService.createForceMatchNotifications(booking, fundi, req.user);
-
   res.status(200).json({
     success: true,
     data: {
@@ -499,14 +588,13 @@ export const adminForceMatch = asyncHandler(async (req, res) => {
 // Calculate estimated price for a fundi
 function getEstimatedPrice(fundi, service) {
   const fundiService = fundi.servicesOffered?.find(
-    s => s.service._id.toString() === service._id.toString()
+    s => s.service && s.service._id.toString() === service._id.toString()
   );
 
   if (fundiService && fundiService.basePrice) {
     return fundiService.basePrice;
   }
 
-  // Fallback to service average
   return (service.minPrice + service.maxPrice) / 2;
 }
 
@@ -523,8 +611,6 @@ function calculateDistanceForDisplay(jobLocation, fundiUser) {
 
   if (distance < 1) {
     return '< 1 km';
-  } else if (distance <= 10) {
-    return `${Math.round(distance)} km`;
   } else {
     return `${Math.round(distance)} km`;
   }
@@ -534,7 +620,6 @@ function calculateDistanceForDisplay(jobLocation, fundiUser) {
 async function calculateEmergencyScore(fundi, job) {
   const breakdown = await matchingService.getScoreBreakdown(fundi, job);
   
-  // Emergency weights: higher priority on location and response time
   const emergencyWeights = {
     location: 0.35,
     rating: 0.15,
@@ -561,12 +646,9 @@ function calculateEstimatedArrival(fundi, job) {
     fundi.user.coordinates
   );
 
-  // Assume average speed of 30 km/h in urban areas
   const travelTimeHours = distance / 30;
   const travelTimeMinutes = Math.ceil(travelTimeHours * 60);
-
-  // Add buffer for preparation
-  const totalMinutes = travelTimeMinutes + 15; // 15 minutes preparation
+  const totalMinutes = travelTimeMinutes + 15;
 
   if (totalMinutes <= 30) {
     return 'Within 30 minutes';
@@ -605,22 +687,18 @@ function calculateAcceptanceRate(fundi) {
 
 // Calculate overall match score for fundi
 async function calculateOverallMatchScore(fundi) {
-  // This would be a comprehensive score based on fundi's profile and performance
-  let baseScore = fundi.stats.rating * 20 || 50; // Convert 5-star to 100 scale
+  let baseScore = fundi.stats.rating * 20 || 50;
 
-  // Bonus for verification
   if (fundi.verificationStatus === 'verified') {
     baseScore += 10;
   }
 
-  // Bonus for experience
   if (fundi.yearsOfExperience > 5) {
     baseScore += 10;
   } else if (fundi.yearsOfExperience > 2) {
     baseScore += 5;
   }
 
-  // Bonus for completion rate
   const completionRate = fundi.stats.completedJobs / (fundi.stats.totalJobs || 1);
   if (completionRate > 0.9) {
     baseScore += 10;
@@ -655,13 +733,23 @@ async function getTopMatchingFactors(fundi) {
     factors.push('Premium fundi');
   }
 
-  return factors.slice(0, 3); // Return top 3 factors
+  return factors.slice(0, 3);
 }
 
 // Get areas of high demand for fundi
 async function getAreasOfHighDemand(fundi) {
-  // This would typically query booking data to find areas with high demand
-  // For now, return fundi's operating areas
   return fundi.operatingCounties.slice(0, 3);
 }
 
+// Helper function for fallback messages
+function getFallbackMessage(strategy) {
+  const messages = {
+    strict: 'Best matches found using strict criteria',
+    relaxed_rating: 'Matches found with relaxed rating requirements',
+    relaxed_availability: 'Matches include currently unavailable fundis',
+    same_locality: 'Matches from your locality (may be further away)',
+    emergency_fallback: 'Emergency fallback matches found',
+    none: 'No matches available'
+  };
+  return messages[strategy] || 'Matches found';
+}

@@ -21,8 +21,9 @@ import {
   DollarSign
 } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
+import countiesMapping, { counties } from '../../lib/countiesTowns'
 import { useApi } from '../../hooks/useApi'
-import { userAPI } from '../../lib/api' // Remove analyticsAPI import
+import { userAPI, matchingAPI } from '../../lib/api' // Remove analyticsAPI import
 import toast from 'react-hot-toast'
 import LoadingSpinner from '../../components/common/LoadingSpinner'
 import ErrorMessage from '../../components/common/ErrorMessage'
@@ -49,6 +50,7 @@ export default function Profile() {
   // API hooks - remove analytics call
   const { execute: fetchProfile } = useApi(userAPI.getProfile, { showToast: false })
   const { execute: updateProfile } = useApi(userAPI.updateProfile, { successMessage: 'Profile updated successfully!' })
+  const { execute: updateFundiPreferences } = useApi(matchingAPI.updatePreferences, { successMessage: 'Profile updated successfully!' })
   const { execute: uploadPhoto } = useApi(userAPI.uploadPhoto, { successMessage: 'Profile photo updated!' })
 
   // Load profile data
@@ -93,6 +95,16 @@ export default function Profile() {
   // Handle form input changes
   const handleInputChange = (e) => {
     const { name, value } = e.target
+    // Support simple latitude/longitude inputs as named fields
+    if (name === 'latitude' || name === 'longitude') {
+      setFormData(prev => ({
+        ...prev,
+        coordinates: { ...(prev.coordinates || {}), latitude: name === 'latitude' ? value : (prev.coordinates?.latitude || prev.user?.coordinates?.latitude), longitude: name === 'longitude' ? value : (prev.coordinates?.longitude || prev.user?.coordinates?.longitude) },
+        user: { ...(prev.user || {}), coordinates: { ...(prev.user?.coordinates || {}), latitude: name === 'latitude' ? value : (prev.user?.coordinates?.latitude), longitude: name === 'longitude' ? value : (prev.user?.coordinates?.longitude) } }
+      }))
+      return
+    }
+
     setFormData(prev => ({
       ...prev,
       [name]: value
@@ -114,7 +126,18 @@ export default function Profile() {
 
     setSaving(true)
     try {
-      const updatedProfile = await updateProfile(values)
+      // Decide which endpoint to call. Fundi-specific updates should go to updateFundiProfile
+      let updatedProfile
+      const isFundi = user?.role === 'fundi'
+      const hasFundiFields = values && (values.operatingCounties !== undefined || values.operatingTowns !== undefined || values.workingHours !== undefined || values.workingDays !== undefined || values.tools !== undefined || values.serviceAreas !== undefined || values.languages !== undefined || values.hourlyRate !== undefined || values.experience !== undefined)
+
+      if (isFundi && hasFundiFields) {
+        // send fundi-specific preferences (operating areas etc) to matching preferences endpoint
+        updatedProfile = await updateFundiPreferences(values)
+      } else {
+        updatedProfile = await updateProfile(values)
+      }
+
       if (updatedProfile) {
         const normalizedProfile = updatedProfile?.data ?? updatedProfile
         setProfile(normalizedProfile)
@@ -128,6 +151,25 @@ export default function Profile() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const pinLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported by your browser')
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const { latitude, longitude } = pos.coords
+      setFormData(prev => ({
+        ...prev,
+        coordinates: { latitude, longitude },
+        user: { ...(prev.user || {}), coordinates: { latitude, longitude } }
+      }))
+      toast.success('Location pinned')
+    }, (err) => {
+      toast.error('Failed to get location: ' + err.message)
+    })
   }
 
   // Handle photo upload
@@ -331,31 +373,39 @@ export default function Profile() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              County
-            </label>
-            <input
-              type="text"
-              name="county"
-              value={formData.county || ''}
-              onChange={handleInputChange}
-              disabled={!editMode}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-2">County</label>
+            <select name="county" value={formData.county || ''} onChange={(e) => {
+              const val = e.target.value
+              // set county and reset town to first town in that county (if any)
+              const towns = countiesMapping[val] || []
+              setFormData(prev => ({ ...prev, county: val, town: towns[0] || '' }))
+            }} disabled={!editMode} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100">
+              <option value="">Select county</option>
+              {counties.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Town
-            </label>
-            <input
-              type="text"
-              name="town"
-              value={formData.town || ''}
-              onChange={handleInputChange}
-              disabled={!editMode}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-2">Town</label>
+            <select name="town" value={formData.town || ''} onChange={handleInputChange} disabled={!editMode} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100">
+              <option value="">Select town</option>
+              {(countiesMapping[formData.county] || []).map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Latitude</label>
+              <input type="text" name="latitude" value={formData.coordinates?.latitude || ''} onChange={handleInputChange} disabled={!editMode} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Longitude</label>
+              <input type="text" name="longitude" value={formData.coordinates?.longitude || ''} onChange={handleInputChange} disabled={!editMode} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+            </div>
+
+            <div className="flex items-end">
+              <button type="button" onClick={pinLocation} disabled={!editMode} className="w-full bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-600">Pin my location</button>
+            </div>
           </div>
         </div>
 

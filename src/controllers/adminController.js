@@ -12,6 +12,8 @@ import Role from '../models/Role.js';
 import Notification from '../models/Notification.js';
 import Admin from '../models/Admin.js';
 import logger from '../middleware/logger.js';
+import AuditLog from '../models/AuditLog.js';
+import notificationService from '../services/notificationService.js';
 
 // @desc    Get admin dashboard statistics
 // @route   GET /api/v1/admin/dashboard
@@ -154,8 +156,24 @@ export const getVerificationRequests = async (req, res, next) => {
 
     // Build filter
     const filter = {};
-    if (status) filter.status = status;
-    if (applicantType) filter.applicantType = applicantType;
+    // Support comma-separated values (e.g. 'submitted,under_review') -> $in query
+    if (status) {
+      if (typeof status === 'string' && status.includes(',')) {
+        const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
+        if (statuses.length) filter.status = { $in: statuses };
+      } else {
+        filter.status = status;
+      }
+    }
+
+    if (applicantType) {
+      if (typeof applicantType === 'string' && applicantType.includes(',')) {
+        const types = applicantType.split(',').map(s => s.trim()).filter(Boolean);
+        if (types.length) filter.applicantType = { $in: types };
+      } else {
+        filter.applicantType = applicantType;
+      }
+    }
 
     // Pagination
     const pageNum = parseInt(page);
@@ -952,6 +970,159 @@ export const adminUpdateUserRole = async (req, res, next) => {
     await user.save();
 
     res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get a single fundi's verification/profile details for admin review
+// @route   GET /api/v1/admin/fundis/:id/verification
+// @access  Private/Admin
+export const getFundiVerification = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const fundi = await Fundi.findById(id)
+      .populate('user', 'firstName lastName email phone role')
+      .lean();
+
+    if (!fundi) {
+      return res.status(404).json({ success: false, error: 'Fundi not found' });
+    }
+
+    // Also fetch any Verification documents submitted by this user (if present)
+    const verifications = await Verification.find({ applicant: fundi.user._id }).sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        fundi,
+        verifications
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Verify a single fundi (admin action)
+// @route   POST /api/v1/admin/fundis/:id/verify
+// @access  Private/Admin
+export const verifyFundi = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+    const adminId = req.user._id;
+
+    const fundi = await Fundi.findById(id).populate('user', 'firstName lastName email');
+    if (!fundi) return res.status(404).json({ success: false, error: 'Fundi not found' });
+
+    fundi.verification.overallStatus = 'verified';
+    fundi.verification.verificationDate = new Date();
+    fundi.verification.verifiedBy = adminId;
+    fundi.verification.videoVerified = true;
+    fundi.verification.toolsVerified = true;
+    fundi.verification.idVerified = true;
+    fundi.verification.ncaVerified = !!fundi.ncaCertificate;
+
+    await fundi.save();
+
+    // Update user record
+    await User.findByIdAndUpdate(fundi.user._id, { isVerified: true });
+
+    // Create notification via notification service so sockets and delivery are handled
+    try {
+      await notificationService.sendNotification({
+        recipient: fundi.user._id,
+        recipientType: 'fundi',
+        title: 'Profile Verified',
+        message: `Your fundi profile has been verified. ${notes || ''}`,
+        notificationType: 'verification_approved',
+        action: 'navigate',
+        actionData: { screen: 'Dashboard' },
+        channels: ['in_app', 'email']
+      });
+    } catch (notifErr) {
+      logger.warn('Failed to send verification notification via notificationService', notifErr.message);
+      // fallback to direct Notification.create
+      await Notification.create({
+        recipient: fundi.user._id,
+        recipientType: 'fundi',
+        title: 'Profile Verified',
+        message: `Your fundi profile has been verified. ${notes || ''}`,
+        notificationType: 'verification_approved'
+      });
+    }
+
+    await AuditLog.logAction({
+      userId: req.user._id,
+      userRole: req.user.role,
+      userEmail: req.user.email,
+      action: 'verify_fundi',
+      targetEntity: { entityType: 'Fundi', entityId: id },
+      metadata: { notes },
+      severity: 'high',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent')
+    });
+
+    res.status(200).json({ success: true, message: 'Fundi verified', data: { fundi } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reject a single fundi verification (admin action)
+// @route   POST /api/v1/admin/fundis/:id/reject
+// @access  Private/Admin
+export const rejectFundi = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { reason, notes } = req.body;
+    if (!reason) return res.status(400).json({ success: false, error: 'Rejection reason is required' });
+
+    const fundi = await Fundi.findById(id).populate('user', 'firstName lastName email');
+    if (!fundi) return res.status(404).json({ success: false, error: 'Fundi not found' });
+
+    fundi.verification.overallStatus = 'rejected';
+    fundi.verification.verificationDate = new Date();
+    fundi.verification.verifiedBy = req.user._id;
+    await fundi.save();
+
+    try {
+      await notificationService.sendNotification({
+        recipient: fundi.user._id,
+        recipientType: 'fundi',
+        title: 'Verification Rejected',
+        message: `Your fundi profile verification was rejected. Reason: ${reason}`,
+        notificationType: 'verification_rejected',
+        action: 'navigate',
+        actionData: { screen: 'Verification' },
+        channels: ['in_app', 'email']
+      });
+    } catch (notifErr) {
+      logger.warn('Failed to send verification rejection notification via notificationService', notifErr.message);
+      await Notification.create({
+        recipient: fundi.user._id,
+        recipientType: 'fundi',
+        title: 'Verification Rejected',
+        message: `Your fundi profile verification was rejected. Reason: ${reason}`,
+        notificationType: 'verification_rejected'
+      });
+    }
+
+    await AuditLog.logAction({
+      userId: req.user._id,
+      userRole: req.user.role,
+      userEmail: req.user.email,
+      action: 'reject_fundi',
+      targetEntity: { entityType: 'Fundi', entityId: id },
+      metadata: { reason, notes },
+      severity: 'high',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent')
+    });
+
+    res.status(200).json({ success: true, message: 'Fundi verification rejected', data: { fundi } });
   } catch (error) {
     next(error);
   }

@@ -6,6 +6,9 @@ import {
   approveVerification,
   rejectVerification,
   requestAdditionalInfo,
+  getFundiVerification,
+  verifyFundi,
+  rejectFundi,
   getSystemAnalytics,
   getEscrowAccount,
   updateSystemSettings,
@@ -45,6 +48,11 @@ router.patch('/verifications/:id/assign', validateObjectId, assignVerification);
 router.patch('/verifications/:id/approve', validateObjectId, approveVerification);
 router.patch('/verifications/:id/reject', validateObjectId, rejectVerification);
 router.patch('/verifications/:id/request-info', validateObjectId, requestAdditionalInfo);
+
+// Single fundi verification review endpoints
+router.get('/fundis/:id/verification', validateObjectId, getFundiVerification);
+router.post('/fundis/:id/verify', validateObjectId, verifyFundi);
+router.post('/fundis/:id/reject', validateObjectId, rejectFundi);
 
 // Financial management
 router.get('/escrow', getEscrowAccount);

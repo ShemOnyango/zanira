@@ -5,6 +5,7 @@ import Fundi from '../models/Fundi.js';
 import Admin from '../models/Admin.js';
 import Shop from '../models/Shop.js';
 import logger from './logger.js';
+import { normalizeRole } from '../utils/roleUtils.js';
 
 // Protect routes - verify JWT
 export const protect = async (req, res, next) => {
@@ -94,16 +95,25 @@ export const protect = async (req, res, next) => {
 export const authorize = (...roles) => {
   return (req, res, next) => {
     try {
-      logger.info(`Authorize middleware: route=${req.method} ${req.originalUrl} allowedRoles=${roles.join(',')} resolvedRole=${req.user?.role}`);
+      const resolved = req.user?.role;
+      const userNorm = normalizeRole(resolved);
+      const allowedNorm = roles.map(r => normalizeRole(r));
+      logger.info(`Authorize middleware: route=${req.method} ${req.originalUrl} allowedRoles=${allowedNorm.join(',')} resolvedRole=${resolved} normalized=${userNorm}`);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.log('Authorize logger error', e);
     }
 
-    if (!roles.includes(req.user.role)) {
+    // Normalize both the user's role and the allowed roles so synonyms like
+    // 'super_admin' or 'system' map to the canonical 'admin' and don't cause
+    // accidental authorization failures.
+    const userRole = normalizeRole(req.user?.role);
+    const allowed = roles.map(r => normalizeRole(r));
+
+    if (!allowed.includes(userRole)) {
       return res.status(403).json({
         success: false,
-        error: `User role '${req.user.role}' is not authorized to access this route`
+        error: `User role '${req.user?.role}' is not authorized to access this route`
       });
     }
 

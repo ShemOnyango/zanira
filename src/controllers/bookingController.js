@@ -37,6 +37,32 @@ export const createBooking = async (req, res, _next) => {
       }
     }
 
+    // Normalize coordinates to an object { latitude, longitude }
+    try {
+      const coords = location?.coordinates;
+      if (Array.isArray(coords) && coords.length >= 2) {
+        // Older clients may send [lng, lat]
+        const [lng, lat] = coords;
+        location.coordinates = { latitude: Number(lat), longitude: Number(lng) };
+      } else if (coords && typeof coords === 'object') {
+        // Accept { lat, lng } or { latitude, longitude }
+        if (coords.lat !== undefined || coords.lng !== undefined) {
+          location.coordinates = { latitude: Number(coords.lat), longitude: Number(coords.lng) };
+        } else if (coords.latitude !== undefined || coords.longitude !== undefined) {
+          location.coordinates = { latitude: Number(coords.latitude), longitude: Number(coords.longitude) };
+        } else {
+          // Unknown shape -> remove
+          location.coordinates = undefined;
+        }
+      } else {
+        // Not provided or invalid -> ensure undefined
+        location.coordinates = undefined;
+      }
+    } catch (coordErr) {
+      // If normalization fails, clear coordinates to avoid schema issues
+      location.coordinates = undefined;
+    }
+
     const clientId = req.user._id;
 
     // Validate client exists
@@ -244,9 +270,11 @@ export const getUserBookings = async (req, res, next) => {
           service: { $in: offeredServiceIds }
         };
 
-        // Optional: prefer same county if fundi has a location
-        if (fundiRecord.location && fundiRecord.location.county) {
-          filter['location.county'] = fundiRecord.location.county;
+        // Optional: prefer same county if fundi has declared operating counties or user profile county
+        if (Array.isArray(fundiRecord.operatingCounties) && fundiRecord.operatingCounties.length > 0) {
+          filter['location.county'] = { $in: fundiRecord.operatingCounties };
+        } else if (fundiRecord.user && fundiRecord.user.county) {
+          filter['location.county'] = fundiRecord.user.county;
         }
       } else {
         // Otherwise, return bookings assigned to this fundi
@@ -1048,8 +1076,7 @@ export const findMatchingFundis = async (req, res, next) => {
     const bookingId = req.params.id;
     
     const booking = await Booking.findById(bookingId)
-      .populate('service')
-      .populate('location');
+      .populate('service');
 
     if (!booking) {
       return res.status(404).json({
@@ -1067,51 +1094,110 @@ export const findMatchingFundis = async (req, res, next) => {
 
     let matchingFundis = []
 
-    // 1) Try same county
-    matchingFundis = await Fundi.find({
-      ...baseCriteria,
-      'location.county': booking.location.county
-    })
-    .populate('user', 'firstName lastName phone profilePhoto')
-    .populate('servicesOffered.service')
-    .select('user servicesOffered location rating stats');
+    console.log('DEBUG: Starting fundi search for booking:', {
+      bookingId,
+      county: booking.location?.county,
+      town: booking.location?.town,
+      serviceId: booking.service?._id
+    });
 
-    // 2) If none, try same town within county
+    // 1) First try: Find any verified fundis
+    matchingFundis = await Fundi.find({
+      'verification.overallStatus': 'verified'
+    })
+    .populate('user', 'firstName lastName phone profilePhoto county town coordinates')
+    .populate('servicesOffered.service')
+    .select('user servicesOffered operatingCounties operatingTowns stats rating availability');
+
+    console.log('DEBUG: Initial fundi search found:', matchingFundis.length, 'verified fundis');
+
+    // Filter by service and location in memory for debugging
+    matchingFundis = matchingFundis.filter(fundi => {
+      // Check if fundi offers the service
+      const hasService = fundi.servicesOffered?.some(
+        service => service.service?._id?.toString() === booking.service?._id?.toString()
+      );
+
+      // Check if fundi operates in the county
+      const hasCounty = fundi.operatingCounties?.includes(booking.location?.county);
+
+      console.log('DEBUG: Fundi match details:', {
+        fundiId: fundi._id,
+        hasService,
+        hasCounty,
+        fundiServices: fundi.servicesOffered?.map(s => s.service?._id?.toString()),
+        fundiCounties: fundi.operatingCounties,
+        bookingService: booking.service?._id?.toString(),
+        bookingCounty: booking.location?.county
+      });
+
+      return hasService && hasCounty;
+    });
+
+    // 2) If none, try fundis who declared the specific town
     if ((!matchingFundis || matchingFundis.length === 0) && booking.location?.town) {
       matchingFundis = await Fundi.find({
         ...baseCriteria,
-        'location.town': booking.location.town
+        operatingTowns: booking.location.town
       })
-      .populate('user', 'firstName lastName phone profilePhoto')
+      .populate('user', 'firstName lastName phone profilePhoto county town coordinates')
       .populate('servicesOffered.service')
-      .select('user servicesOffered location rating stats');
+      .select('user servicesOffered operatingCounties operatingTowns stats rating availability');
     }
 
-    // 3) If still none and coordinates provided, try a geo-near search within 25km
-    if ((!matchingFundis || matchingFundis.length === 0) && booking.location?.coordinates && Array.isArray(booking.location.coordinates)) {
+    // 3) If still none, and coordinates provided, fall back to distance calculation
+    //    using the fundi's user.coordinates (if available). We fetch candidate fundis
+    //    by service and then filter/sort by calculated distance.
+    if ((!matchingFundis || matchingFundis.length === 0) && booking.location?.coordinates?.latitude && booking.location?.coordinates?.longitude) {
       try {
-        const [lng, lat] = booking.location.coordinates
-        matchingFundis = await Fundi.find({
-          ...baseCriteria,
-          'location.coordinates': {
-            $near: {
-              $geometry: {
-                type: 'Point',
-                coordinates: [lng, lat]
-              },
-              $maxDistance: 25000 // 25km
-            }
-          }
+        const lat = booking.location.coordinates.latitude;
+        const lng = booking.location.coordinates.longitude;
+
+        // Get all fundis offering the service (broader search)
+        const candidates = await Fundi.find({
+          ...baseCriteria
         })
-        .populate('user', 'firstName lastName phone profilePhoto')
+        .populate('user', 'firstName lastName phone profilePhoto county town coordinates')
         .populate('servicesOffered.service')
-        .select('user servicesOffered location rating stats');
+        .select('user servicesOffered operatingCounties operatingTowns stats rating availability maxDistance');
+
+        // Filter candidates that have coordinates and compute distance
+        const withDistance = candidates
+          .map(f => {
+            const coords = f.user?.coordinates;
+            if (!coords || typeof coords.latitude !== 'number' || typeof coords.longitude !== 'number') return null;
+            const distance = (function(lat1, lon1, lat2, lon2) {
+              const R = 6371; // km
+              const dLat = (lat2 - lat1) * Math.PI / 180;
+              const dLon = (lon2 - lon1) * Math.PI / 180;
+              const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+              return R * c;
+            })(lat, lng, coords.latitude, coords.longitude);
+
+            return { fundi: f, distance };
+          })
+          .filter(Boolean)
+          .filter(x => x.distance <= (x.fundi.maxDistance || 50));
+
+        // Sort by distance ascending and map back to fundi objects
+        matchingFundis = withDistance.sort((a, b) => a.distance - b.distance).map(d => d.fundi);
       } catch (geErr) {
-        logger.warn('Geo search failed for matching fundis', { bookingId, error: geErr })
+        logger.warn('Geo distance fallback failed for matching fundis', { bookingId, error: geErr })
       }
     }
 
-    logger.info('findMatchingFundis search', { bookingId, serviceId: booking.service._id, location: booking.location, matches: (matchingFundis||[]).length })
+    logger.info('findMatchingFundis search results', { 
+      bookingId, 
+      serviceId: booking.service._id, 
+      location: {
+        county: booking.location?.county,
+        town: booking.location?.town,
+        hasCoordinates: !!(booking.location?.coordinates?.latitude && booking.location?.coordinates?.longitude)
+      }, 
+      matches: (matchingFundis||[]).length,
+      matchingFundiIds: (matchingFundis||[]).map(f => f._id)
+    })
 
   // Calculate match score for each fundi
     const fundisWithScore = matchingFundis.map(fundi => {
@@ -1120,10 +1206,17 @@ export const findMatchingFundis = async (req, res, next) => {
       // Base score for service match
       score += 40;
       
-      // Location match (same town gets higher score)
-      if (fundi.location.town === booking.location.town) {
-        score += 30;
-      } else {
+      // Location match: prefer declared operating towns, otherwise compare user's town
+      try {
+        const inOperatingTown = Array.isArray(fundi.operatingTowns) && booking.location?.town && fundi.operatingTowns.includes(booking.location.town);
+        const sameUserTown = !!(fundi.user && fundi.user.town && booking.location && fundi.user.town === booking.location.town);
+
+        if (inOperatingTown || sameUserTown) {
+          score += 30;
+        } else {
+          score += 15;
+        }
+      } catch (e) {
         score += 15;
       }
       
@@ -1187,25 +1280,30 @@ export const pushBookingToFundis = async (req, res, next) => {
 
     let matchingFundis = [];
 
-    // Try multiple location matching strategies
-    // 1. Same county
+    // Try multiple location matching strategies aligned with Fundi model
+    // 1) Fundis who declared the county in their operatingCounties
     matchingFundis = await Fundi.find({
       ...baseCriteria,
-      'location.county': booking.location.county
+      operatingCounties: booking.location.county
     }).populate('user', 'firstName lastName phone');
 
-    // 2. If none found in same county, try same town
+    // 2) If none found in county, try fundis who declared the town in operatingTowns
     if (matchingFundis.length === 0 && booking.location?.town) {
       matchingFundis = await Fundi.find({
         ...baseCriteria,
-        'location.town': booking.location.town
+        operatingTowns: booking.location.town
       }).populate('user', 'firstName lastName phone');
     }
 
-    // 3. If still none, try any fundis with the same service (broader search)
+    // 3) If still none, broaden to any fundis offering the service, but prefer those
+    //    whose user profile county matches the booking county
     if (matchingFundis.length === 0) {
       matchingFundis = await Fundi.find(baseCriteria)
-        .populate('user', 'firstName lastName phone');
+        .populate('user', 'firstName lastName phone county town coordinates');
+
+      // Prefer candidates in the same county (from user profile)
+      const sameCounty = matchingFundis.filter(f => f.user && f.user.county === booking.location.county);
+      if (sameCounty.length > 0) matchingFundis = sameCounty;
     }
 
     console.log(`Found ${matchingFundis.length} matching fundis for booking ${bookingId}`);

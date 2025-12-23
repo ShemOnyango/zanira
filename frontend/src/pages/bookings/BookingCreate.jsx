@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { 
   ArrowLeft, 
   MapPin, 
+  Navigation,
   Calendar, 
   Clock, 
   DollarSign, 
@@ -12,15 +13,17 @@ import {
   Upload,
   X
 } from 'lucide-react'
+import toast from 'react-hot-toast'
+import MapSelectorModal from '../../components/common/MapSelectorModal'
 import { useApi } from '../../hooks/useApi'
 import { serviceAPI, bookingAPI } from '../../lib/api'
 import FormInput from '../../components/forms/FormInput'
 import FormSelect from '../../components/forms/FormSelect'
 import FormTextarea from '../../components/forms/FormTextarea'
-import Modal from '../../components/common/Modal'
+// Modal not used here; MapSelectorModal provides the map modal
 import LoadingSpinner from '../../components/common/LoadingSpinner'
 import ErrorMessage from '../../components/common/ErrorMessage'
-import { KENYAN_COUNTIES, KENYAN_TOWNS } from '../../lib/constants'
+import mapping, { counties as kenyaCounties } from '../../lib/countiesTowns'
 
 export default function BookingCreate() {
   const navigate = useNavigate()
@@ -34,7 +37,7 @@ export default function BookingCreate() {
       address: '',
       county: '',
       town: '',
-      coordinates: { lat: 0, lng: 0 }
+      coordinates: { latitude: 0, longitude: 0 }
     },
     scheduledDate: '',
     scheduledTime: '',
@@ -44,6 +47,11 @@ export default function BookingCreate() {
     urgency: 'normal',
     // fundiId removed: bookings are posted without client-side fundi selection
   })
+
+  // Location helpers
+  const [locationLoading, setLocationLoading] = useState(false)
+  const [showMapModal, setShowMapModal] = useState(false)
+  const [mapCoordinates, setMapCoordinates] = useState({ latitude: 0, longitude: 0 })
 
   // API hooks
   const { execute: fetchServices, loading: servicesLoading } = useApi(serviceAPI.getAll, { showToast: false })
@@ -109,6 +117,79 @@ export default function BookingCreate() {
       location: {
         ...prev.location,
         [field]: value
+      }
+    }))
+  }
+
+  // Pin current location using Geolocation API
+  const pinLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported by your browser')
+      return
+    }
+
+    setLocationLoading(true)
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords
+        setFormData(prev => ({
+          ...prev,
+          location: {
+            ...prev.location,
+            coordinates: { latitude, longitude }
+          }
+        }))
+        setLocationLoading(false)
+        toast.success('Location pinned successfully!')
+      },
+      (error) => {
+        setLocationLoading(false)
+        let errorMessage = 'Failed to get location'
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = 'Location access denied. Please enable location permissions.'
+            break
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = 'Location information unavailable.'
+            break
+          case error.TIMEOUT:
+            errorMessage = 'Location request timed out.'
+            break
+        }
+        toast.error(errorMessage)
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 60000
+      }
+    )
+  }
+
+  // Handler when a location is selected from the map modal
+  const handleMapSelect = (lat, lng) => {
+    setFormData(prev => ({
+      ...prev,
+      location: {
+        ...prev.location,
+        coordinates: { latitude: lat, longitude: lng }
+      }
+    }))
+    setShowMapModal(false)
+    toast.success('Location selected from map!')
+  }
+
+  // Manual coordinate inputs
+  const handleCoordinateChange = (field, value) => {
+    const numValue = parseFloat(value) || 0
+    setFormData(prev => ({
+      ...prev,
+      location: {
+        ...prev.location,
+        coordinates: {
+          ...prev.location.coordinates,
+          [field]: numValue
+        }
       }
     }))
   }
@@ -198,7 +279,7 @@ export default function BookingCreate() {
   // Get towns for selected county
   const getTownsForCounty = () => {
     if (!formData.location.county) return []
-    return KENYAN_TOWNS[formData.location.county] || []
+    return mapping[formData.location.county] || []
   }
 
   // Calculate progress percentage
@@ -310,16 +391,18 @@ export default function BookingCreate() {
                   label="County"
                   value={formData.location.county}
                   onChange={(e) => handleLocationChange('county', e.target.value)}
-                  options={KENYAN_COUNTIES.map(county => ({ value: county, label: county }))}
+                  options={kenyaCounties.map(county => ({ value: county, label: county }))}
                   required
                 />
                 
-                <FormInput
+                <FormSelect
                   label="Town"
                   value={formData.location.town}
                   onChange={(e) => handleLocationChange('town', e.target.value)}
-                  placeholder="Enter town or locality"
+                  options={getTownsForCounty().map(town => ({ value: town, label: town }))}
                   required
+                  placeholder="Select a town"
+                  disabled={!formData.location.county}
                 />
               </div>
 
@@ -331,6 +414,83 @@ export default function BookingCreate() {
                 required
                 icon={MapPin}
               />
+
+              {/* Pin Location Section */}
+              <div className="border-t pt-6 mt-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Pin Exact Location</h3>
+                <p className="text-gray-600 mb-4">
+                  Pin your exact location for better fundi matching and accurate service delivery.
+                </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Latitude
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={formData.location.coordinates.latitude}
+                      onChange={(e) => handleCoordinateChange('latitude', e.target.value)}
+                      placeholder="e.g., -1.2921"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Longitude
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={formData.location.coordinates.longitude}
+                      onChange={(e) => handleCoordinateChange('longitude', e.target.value)}
+                      placeholder="e.g., 36.8219"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    type="button"
+                    onClick={pinLocation}
+                    disabled={locationLoading}
+                    className="flex items-center justify-center space-x-2 bg-teal-500 text-white px-4 py-3 rounded-lg hover:bg-teal-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {locationLoading ? (
+                      <LoadingSpinner size="sm" />
+                    ) : (
+                      <Navigation className="w-5 h-5" />
+                    )}
+                    <span>
+                      {locationLoading ? 'Getting Location...' : 'Pin My Current Location'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapCoordinates(formData.location.coordinates)
+                      setShowMapModal(true)
+                    }}
+                    className="flex items-center justify-center space-x-2 bg-blue-500 text-white px-4 py-3 rounded-lg hover:bg-blue-600 transition-colors"
+                  >
+                    <MapPin className="w-5 h-5" />
+                    <span>Select from Map</span>
+                  </button>
+                </div>
+
+                {/* Display current coordinates */}
+                {(formData.location.coordinates.latitude !== 0 || formData.location.coordinates.longitude !== 0) && (
+                  <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <p className="text-green-800 text-sm">
+                      <strong>Location Pinned:</strong> {formData.location.coordinates.latitude.toFixed(6)}, {formData.location.coordinates.longitude.toFixed(6)}
+                    </p>
+                  </div>
+                )}
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FormInput
@@ -578,6 +738,12 @@ export default function BookingCreate() {
       </div>
 
       {/* Fundi Matching Modal removed from client side */}
+      <MapSelectorModal
+        isOpen={showMapModal}
+        onClose={() => setShowMapModal(false)}
+        onLocationSelect={handleMapSelect}
+        initialCoordinates={mapCoordinates}
+      />
     </div>
   )
 }

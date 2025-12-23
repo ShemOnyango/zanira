@@ -2,6 +2,8 @@ import cloudinary from '../config/cloudinary.js';
 import Fundi from '../models/Fundi.js';
 import User from '../models/User.js';
 import Verification from '../models/Verification.js';
+import AuditLog from '../models/AuditLog.js';
+import notificationService from '../services/notificationService.js';
 //import { protect, authorize } from '../middleware/auth.js';
 import logger from '../middleware/logger.js';
 
@@ -61,16 +63,20 @@ export const uploadVerificationDocuments = async (req, res, next) => {
       });
     }
 
-    const verification = await Verification.findOne({
+    let verification = await Verification.findOne({
       applicant: req.user._id,
       applicantType: req.user.role === 'fundi' ? 'fundi' : 'client'
     });
 
+    // If the verification document doesn't exist (older accounts, migrations), create one
     if (!verification) {
-      return res.status(404).json({
-        success: false,
-        error: 'Verification record not found'
+      verification = await Verification.create({
+        applicant: req.user._id,
+        applicantType: req.user.role === 'fundi' ? 'fundi' : 'client',
+        status: 'draft',
+        documents: {}
       });
+      logger.info(`Created missing verification record for user ${req.user._id}`);
     }
 
     const uploadedFiles = {};
@@ -110,6 +116,41 @@ export const uploadVerificationDocuments = async (req, res, next) => {
     verification.submissionDate = new Date();
     
     await verification.save();
+
+    // Notify admins that a new verification was submitted
+    try {
+      const admins = await User.find({ role: { $in: ['admin', 'super_admin'] } }).select('_id email');
+      if (admins && admins.length) {
+        await notificationService.sendBulkNotifications(admins, {
+          title: 'New Verification Submitted',
+          message: `A user has submitted verification documents (userId: ${req.user._id}). Please review.`,
+          recipientType: 'admin',
+          notificationType: 'verification_submitted',
+          action: 'navigate',
+          actionData: { screen: 'AdminVerifications' },
+          channels: ['in_app', 'email']
+        });
+      }
+    } catch (notifErr) {
+      logger.warn('Failed to notify admins of new verification submission', notifErr.message);
+    }
+
+    // Audit log the upload action
+    try {
+      await AuditLog.logAction({
+        userId: req.user._id,
+        userRole: req.user.role,
+        userEmail: req.user.email,
+        action: 'upload_verification_documents',
+        targetEntity: { entityType: 'Verification', entityId: verification._id },
+        metadata: { uploadedFiles },
+        severity: 'medium',
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent')
+      });
+    } catch (auditErr) {
+      logger.warn('Failed to write audit log for verification upload', auditErr.message);
+    }
 
     res.status(200).json({
       success: true,

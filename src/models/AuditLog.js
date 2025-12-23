@@ -15,21 +15,6 @@ const auditLogSchema = new mongoose.Schema({
   action: {
     type: String,
     required: true,
-    enum: [
-      'user_created', 'user_updated', 'user_deleted', 'user_suspended', 'user_activated',
-      'booking_created', 'booking_updated', 'booking_cancelled', 'booking_completed',
-      'payment_processed', 'payment_refunded', 'payment_released',
-      'fundi_verified', 'fundi_rejected', 'fundi_suspended',
-      'shop_verified', 'shop_rejected', 'shop_suspended',
-      'settings_changed', 'role_changed', 'permissions_changed',
-      'bulk_operation', 'report_generated', 'export_created',
-      'api_key_generated', 'api_key_revoked',
-      'dispute_created', 'dispute_resolved',
-      'subscription_created', 'subscription_cancelled',
-      'wallet_transaction', 'withdrawal_processed',
-      'security_alert', 'login_attempt', 'password_reset',
-      'data_accessed', 'data_exported', 'data_deleted'
-    ]
   },
 
   targetEntity: {

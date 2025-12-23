@@ -1,7 +1,89 @@
 import Fundi from '../models/Fundi.js';
-//import Booking from '../models/Booking.js';
-//import ServiceCategory from '../models/ServiceCategory.js';
+// import ServiceCategory from '../models/ServiceCategory.js';
 import logger from '../middleware/logger.js';
+
+// Try to import Redis, but fall back to an in-memory cache if unavailable
+let cache = null;
+
+class MemoryCache {
+  constructor() {
+    this.store = new Map();
+  }
+
+  // Normalize different coordinate shapes to { latitude, longitude }
+  normalizeCoordinates(coord) {
+    if (!coord) return null;
+
+    // Array [lng, lat] or [lat, lng]
+    if (Array.isArray(coord) && coord.length >= 2) {
+      const [a, b] = coord;
+      // Heuristic: if values look like lng/lat (lng around 36), assume [lng, lat]
+      if (Math.abs(a) > 90) {
+        return { latitude: Number(b), longitude: Number(a) };
+      }
+      return { latitude: Number(a), longitude: Number(b) };
+    }
+
+    // Object shapes
+    if (typeof coord === 'object') {
+      if (coord.latitude !== undefined || coord.longitude !== undefined) {
+        return { latitude: Number(coord.latitude), longitude: Number(coord.longitude) };
+      }
+      if (coord.lat !== undefined || coord.lng !== undefined) {
+        return { latitude: Number(coord.lat), longitude: Number(coord.lng) };
+      }
+    }
+
+    return null;
+  }
+
+  async get(key) {
+    return this.store.has(key) ? this.store.get(key) : null;
+  }
+
+  async setex(key, seconds, value) {
+    this.store.set(key, value);
+    setTimeout(() => {
+      this.store.delete(key);
+    }, seconds * 1000);
+    return 'OK';
+  }
+
+  async del(keyOrKeys) {
+    if (Array.isArray(keyOrKeys)) {
+      let count = 0;
+      for (const k of keyOrKeys) {
+        if (this.store.delete(k)) count++;
+      }
+      return count;
+    }
+    return this.store.delete(keyOrKeys) ? 1 : 0;
+  }
+
+  async keys(pattern) {
+    const regex = new RegExp('^' + pattern.split('*').map(s => s.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')).join('.*') + '$');
+    const matches = [];
+    for (const key of this.store.keys()) {
+      if (regex.test(key)) matches.push(key);
+    }
+    return matches;
+  }
+}
+
+// Initialize with in-memory cache; try to replace with Redis client if available
+cache = new MemoryCache();
+(async () => {
+  try {
+    const mod = await import('../config/redis.js');
+    const redisClient = mod && mod.default ? mod.default : mod;
+    if (redisClient) {
+      cache = redisClient;
+      logger.info('Redis cache enabled for matching service');
+    }
+  } catch (err) {
+    logger.warn('Redis not configured for matching service, using in-memory cache');
+  }
+})();
 
 class MatchingService {
   constructor() {
@@ -14,28 +96,105 @@ class MatchingService {
       price: 0.10,
       completionRate: 0.05
     };
+    
+    // Fallback strategies in order of relaxation
+    this.fallbackStrategies = [
+      {
+        name: 'strict',
+        minRating: 3.0,
+        maxDistance: 50,
+        considerAvailability: true,
+        requireVerification: true
+      },
+      {
+        name: 'relaxed_rating',
+        minRating: 2.0,
+        maxDistance: 50,
+        considerAvailability: true,
+        requireVerification: true
+      },
+      {
+        name: 'relaxed_availability',
+        minRating: 2.0,
+        maxDistance: 50,
+        considerAvailability: false,
+        requireVerification: true
+      },
+      {
+        name: 'same_locality',
+        minRating: 0,
+        maxDistance: null,
+        considerAvailability: false,
+        requireVerification: true,
+        sameCountyOnly: true
+      },
+      {
+        name: 'emergency_fallback',
+        minRating: 0,
+        maxDistance: null,
+        considerAvailability: false,
+        requireVerification: false,
+        sameCountyOnly: false
+      }
+    ];
   }
 
-  // Main matching function
+  // Main matching function with fallback
   async findBestFundis(job, options = {}) {
     try {
       const {
         maxResults = 10,
-        minRating = 3.0,
-        maxDistance = 50, // km
-        considerAvailability = true
+        enableFallback = true,
+        //fallbackStrategy = 'auto'
       } = options;
 
-      // Get potential fundis based on service and basic criteria
-      let fundis = await this.getPotentialFundis(job, {
-        minRating,
-        maxDistance,
-        considerAvailability
-      });
+      // Generate cache key for matching results
+      const cacheKey = `matches:${job._id}:${JSON.stringify(options)}`;
+      
+      // Try to get cached results from the active cache (Redis or in-memory)
+      try {
+        const cachedRaw = await cache.get(cacheKey);
+        if (cachedRaw) {
+          logger.info(`Returning cached matches for job: ${job._id}`);
+          const cached = typeof cachedRaw === 'string' ? JSON.parse(cachedRaw) : cachedRaw;
+          return cached;
+        }
+      } catch (err) {
+        logger.warn('Cache get failed in matching service, continuing without cache', err);
+      }
+
+      let fundis = [];
+      let strategyUsed = 'strict';
+      
+      // Try each fallback strategy until we find fundis
+      for (const strategy of this.fallbackStrategies) {
+        if (!enableFallback && strategy.name !== 'strict') break;
+        
+        fundis = await this.getPotentialFundis(job, {
+          minRating: strategy.minRating,
+          maxDistance: strategy.maxDistance,
+          considerAvailability: strategy.considerAvailability,
+          requireVerification: strategy.requireVerification,
+          sameCountyOnly: strategy.sameCountyOnly
+        });
+
+        strategyUsed = strategy.name;
+        
+        if (fundis.length > 0) {
+          logger.info(`Found ${fundis.length} fundis using strategy: ${strategy.name} for job ${job._id}`);
+          break;
+        }
+        
+        logger.warn(`No fundis found with strategy: ${strategy.name} for job ${job._id}`);
+      }
 
       if (fundis.length === 0) {
-        logger.warn(`No fundis found for job: ${job._id}`);
-        return [];
+        logger.error(`No fundis found even after all fallback strategies for job: ${job._id}`);
+        return {
+          matches: [],
+          fallbackUsed: 'none',
+          message: 'No fundis available in your area'
+        };
       }
 
       // Calculate scores for each fundi
@@ -52,76 +211,131 @@ class MatchingService {
       // Return top results
       const topFundis = scoredFundis.slice(0, maxResults);
 
-      logger.info(`Found ${topFundis.length} matching fundis for job ${job._id}`);
-
       // Compute breakdowns in parallel
       const resultsWithBreakdowns = await Promise.all(
         topFundis.map(async (item) => ({
           fundi: item.fundi,
           score: item.score,
-          breakdown: await this.getScoreBreakdown(item.fundi, job)
+          breakdown: await this.getScoreBreakdown(item.fundi, job),
+          matchQuality: this.getMatchQuality(item.score, strategyUsed)
         }))
       );
 
-      return resultsWithBreakdowns;
+      const result = {
+        matches: resultsWithBreakdowns,
+        fallbackUsed: strategyUsed,
+        totalAvailable: fundis.length
+      };
+
+      // Cache the results for 5 minutes (works with Redis or in-memory cache)
+      try {
+        if (cache && typeof cache.setex === 'function') {
+          await cache.setex(cacheKey, 300, JSON.stringify(result));
+        }
+      } catch (err) {
+        logger.warn('Cache set failed in matching service, continuing without caching', err);
+      }
+
+      logger.info(`Found ${topFundis.length} matching fundis for job ${job._id} using ${strategyUsed} strategy`);
+
+      return result;
+
     } catch (error) {
       logger.error('Error in matching service:', error);
       throw error;
     }
   }
 
-  // Get potential fundis based on basic criteria
+  // Get potential fundis based on criteria
   async getPotentialFundis(job, options) {
     const {
-      minRating,
-      maxDistance,
-      considerAvailability
+      minRating = 3.0,
+      maxDistance = 50,
+      considerAvailability = true,
+      requireVerification = true,
+      sameCountyOnly = false
     } = options;
 
     // Base query
     let query = {
-      'verification.overallStatus': 'verified',
-      'servicesOffered.service': job.serviceCategory,
-      'stats.rating': { $gte: minRating }
+      'servicesOffered.service': job.serviceCategory
     };
+
+    // Verification filter
+    if (requireVerification) {
+      query['verification.overallStatus'] = 'verified';
+    }
+
+    // Rating filter
+    if (minRating > 0) {
+      query['stats.rating'] = { $gte: minRating };
+    }
 
     // Availability filter
     if (considerAvailability) {
       query.availability = 'available';
     }
 
-    // Location filter (if coordinates available)
-    if (job.location.coordinates && maxDistance) {
-      // This would use MongoDB's geospatial queries in production
-      // For now, we'll filter by county
-      query.operatingCounties = job.location.county;
+    // Location filtering
+    // Normalize incoming job coordinates to { latitude, longitude } if possible
+    const jobCoords = this.normalizeCoordinates(job.location?.coordinates);
+    if (job.location?.county) {
+      if (sameCountyOnly) {
+        query.operatingCounties = job.location.county;
+      } else if (jobCoords && maxDistance) {
+        // Use geospatial query if coordinates available
+        query.location = {
+          $near: {
+            $geometry: {
+              type: "Point",
+              coordinates: [jobCoords.longitude, jobCoords.latitude]
+            },
+            $maxDistance: maxDistance * 1000 // Convert to meters
+          }
+        };
+      } else {
+        query.operatingCounties = job.location.county;
+      }
     }
 
-    // Get fundis with populated data
-    const fundis = await Fundi.find(query)
-      .populate('user', 'firstName lastName profilePhoto county town coordinates')
-      .populate('servicesOffered.service')
-      .populate('servicesOffered.service');
+    try {
+      // Get fundis with populated data
+      const fundis = await Fundi.find(query)
+        .populate('user', 'firstName lastName profilePhoto county town coordinates')
+        .populate('servicesOffered.service');
 
-    // Additional filtering by distance if coordinates are available
-    if (job.location.coordinates && maxDistance) {
-      return fundis.filter(fundi => 
-        this.calculateDistance(
-          job.location.coordinates,
-          fundi.user.coordinates
-        ) <= maxDistance
-      );
+      // If using JavaScript distance calculation as fallback
+      let filteredFundis = fundis;
+      const normalizedJobCoords = this.normalizeCoordinates(job.location?.coordinates);
+      if (normalizedJobCoords && maxDistance && !sameCountyOnly) {
+        filteredFundis = fundis.filter(fundi => {
+          const fCoords = this.normalizeCoordinates(fundi.user?.coordinates);
+          return fCoords && this.calculateDistance(normalizedJobCoords, fCoords) <= maxDistance;
+        });
+      }
+
+      // Fallback to county matches if no distance-based matches
+      if (filteredFundis.length === 0 && fundis.length > 0 && sameCountyOnly) {
+        logger.info(`Falling back to ${fundis.length} fundis in same county without distance filtering`);
+        return fundis;
+      }
+
+      return filteredFundis;
+    } catch (error) {
+      logger.error('Error fetching potential fundis:', error);
+      return [];
     }
-
-    return fundis;
   }
 
   // Calculate overall score for a fundi
   async calculateFundiScore(fundi, job) {
     const breakdown = await this.getScoreBreakdown(fundi, job);
     
+    // Use client weights if provided in job
+    const weights = job.preferences?.weights || this.weights;
+    
     return Object.keys(breakdown).reduce((total, category) => {
-      return total + (breakdown[category] * this.weights[category]);
+      return total + (breakdown[category] * weights[category]);
     }, 0);
   }
 
@@ -140,7 +354,10 @@ class MatchingService {
 
   // Location scoring (0-100)
   async calculateLocationScore(fundi, job) {
-    if (!job.location.coordinates || !fundi.user.coordinates) {
+    const jobCoords = this.normalizeCoordinates(job.location?.coordinates);
+    const fundiCoords = this.normalizeCoordinates(fundi.user?.coordinates);
+
+    if (!jobCoords || !fundiCoords) {
       // Fallback to county/town matching
       if (fundi.operatingCounties.includes(job.location.county)) {
         return fundi.operatingTowns.includes(job.location.town) ? 90 : 70;
@@ -148,49 +365,44 @@ class MatchingService {
       return 50;
     }
 
-    const distance = this.calculateDistance(
-      job.location.coordinates,
-      fundi.user.coordinates
-    );
+    const distance = this.calculateDistance(jobCoords, fundiCoords);
 
     // Score based on distance (lower distance = higher score)
-    if (distance <= 5) return 100;    // Within 5km
-    if (distance <= 10) return 90;    // Within 10km
-    if (distance <= 20) return 80;    // Within 20km
-    if (distance <= 30) return 70;    // Within 30km
-    if (distance <= 50) return 60;    // Within 50km
-    return 30;                        // Beyond 50km
+    if (distance <= 5) return 100;
+    if (distance <= 10) return 90;
+    if (distance <= 20) return 80;
+    if (distance <= 30) return 70;
+    if (distance <= 50) return 60;
+    return 30;
   }
 
   // Rating scoring (0-100)
   calculateRatingScore(fundi) {
     const rating = fundi.stats.rating || 0;
-    // Convert 0-5 rating to 0-100 score
     return (rating / 5) * 100;
   }
 
   // Expertise scoring (0-100)
   calculateExpertiseScore(fundi, job) {
-    let score = 50; // Base score
+    let score = 50;
 
     // Years of experience
     const experience = fundi.yearsOfExperience || 0;
-    score += Math.min(experience * 5, 25); // Max 25 points for experience
+    score += Math.min(experience * 5, 25);
 
     // Specialization match
-    const service = fundi.servicesOffered.find(
-      s => s.service._id.toString() === job.serviceCategory.toString()
+    const service = fundi.servicesOffered?.find(
+      s => s.service && s.service._id.toString() === job.serviceCategory.toString()
     );
 
-    if (service) {
-      // Price competitiveness (closer to service base price is better)
+    if (service && service.service) {
       const serviceCategory = service.service;
-      const priceDifference = Math.abs(service.basePrice - serviceCategory.basePrice);
-      const priceRatio = priceDifference / serviceCategory.basePrice;
+      const priceDifference = Math.abs(service.basePrice - (serviceCategory.basePrice || 0));
+      const priceRatio = serviceCategory.basePrice ? priceDifference / serviceCategory.basePrice : 0;
       
-      if (priceRatio <= 0.1) score += 15; // Within 10%
-      else if (priceRatio <= 0.2) score += 10; // Within 20%
-      else if (priceRatio <= 0.3) score += 5; // Within 30%
+      if (priceRatio <= 0.1) score += 15;
+      else if (priceRatio <= 0.2) score += 10;
+      else if (priceRatio <= 0.3) score += 5;
     }
 
     // Certifications bonus
@@ -203,21 +415,21 @@ class MatchingService {
 
   // Response time scoring (0-100)
   calculateResponseTimeScore(fundi) {
-    const responseTime = fundi.stats.responseTime || 0; // in minutes
+    const responseTime = fundi.stats.responseTime || 0;
     
-    if (responseTime === 0) return 80; // No data, assume average
+    if (responseTime === 0) return 80;
     
-    if (responseTime <= 15) return 100;  // Within 15 minutes
-    if (responseTime <= 30) return 90;   // Within 30 minutes
-    if (responseTime <= 60) return 80;   // Within 1 hour
-    if (responseTime <= 120) return 60;  // Within 2 hours
-    if (responseTime <= 240) return 40;  // Within 4 hours
-    return 20;                           // More than 4 hours
+    if (responseTime <= 15) return 100;
+    if (responseTime <= 30) return 90;
+    if (responseTime <= 60) return 80;
+    if (responseTime <= 120) return 60;
+    if (responseTime <= 240) return 40;
+    return 20;
   }
 
   // Availability scoring (0-100)
   async calculateAvailabilityScore(fundi, job) {
-    let score = 70; // Base score for available fundis
+    let score = 70;
 
     // Check if fundi has marked unavailable dates
     if (job.preferredDate && fundi.unavailableDates) {
@@ -229,7 +441,7 @@ class MatchingService {
       if (isUnavailable) {
         return 0;
       }
-      score += 10; // Bonus for being available on preferred date
+      score += 10;
     }
 
     // Check current workload
@@ -240,7 +452,6 @@ class MatchingService {
 
     // Check working hours if job has preferred time
     if (job.preferredTime) {
-      // Simple check - in production, this would verify against workingHours
       score += 5;
     }
 
@@ -249,8 +460,8 @@ class MatchingService {
 
   // Price scoring (0-100)
   calculatePriceScore(fundi, job) {
-    const service = fundi.servicesOffered.find(
-      s => s.service._id.toString() === job.serviceCategory.toString()
+    const service = fundi.servicesOffered?.find(
+      s => s.service && s.service._id.toString() === job.serviceCategory.toString()
     );
 
     if (!service || !job.budget) return 50;
@@ -259,12 +470,10 @@ class MatchingService {
     const clientMaxBudget = job.budget.max;
 
     if (fundiPrice <= clientMaxBudget) {
-      // Lower price gets higher score, but not too low (quality concern)
       const budgetRatio = fundiPrice / clientMaxBudget;
-      return Math.max(60, 100 * (1 - budgetRatio * 0.4)); // 60-100 range
+      return Math.max(60, 100 * (1 - budgetRatio * 0.4));
     }
 
-    // Over budget - score decreases with overage
     const overageRatio = (fundiPrice - clientMaxBudget) / clientMaxBudget;
     return Math.max(0, 50 * (1 - overageRatio));
   }
@@ -274,7 +483,7 @@ class MatchingService {
     const totalJobs = fundi.stats.totalJobs || 0;
     const completedJobs = fundi.stats.completedJobs || 0;
 
-    if (totalJobs === 0) return 70; // No history, assume average
+    if (totalJobs === 0) return 70;
 
     const completionRate = completedJobs / totalJobs;
     return completionRate * 100;
@@ -284,10 +493,10 @@ class MatchingService {
   calculateDistance(coord1, coord2) {
     if (!coord1 || !coord2 || !coord1.latitude || !coord1.longitude || 
         !coord2.latitude || !coord2.longitude) {
-      return Infinity; // Cannot calculate distance
+      return Infinity;
     }
 
-    const R = 6371; // Earth's radius in kilometers
+    const R = 6371;
     const dLat = this.deg2rad(coord2.latitude - coord1.latitude);
     const dLon = this.deg2rad(coord2.longitude - coord1.longitude);
 
@@ -306,31 +515,101 @@ class MatchingService {
     return deg * (Math.PI/180);
   }
 
-  // Emergency matching - finds the closest available fundi
+  // Normalize different coordinate shapes to { latitude, longitude }
+  normalizeCoordinates(coord) {
+    if (!coord) return null;
+
+    // Array [lng, lat] or [lat, lng]
+    if (Array.isArray(coord) && coord.length >= 2) {
+      const [a, b] = coord;
+      // Heuristic: if values look like lng/lat (lng around 36), assume [lng, lat]
+      if (Math.abs(a) > 90) {
+        return { latitude: Number(b), longitude: Number(a) };
+      }
+      return { latitude: Number(a), longitude: Number(b) };
+    }
+
+    // Object shapes
+    if (typeof coord === 'object') {
+      if (coord.latitude !== undefined || coord.longitude !== undefined) {
+        return { latitude: Number(coord.latitude), longitude: Number(coord.longitude) };
+      }
+      if (coord.lat !== undefined || coord.lng !== undefined) {
+        return { latitude: Number(coord.lat), longitude: Number(coord.lng) };
+      }
+    }
+
+    return null;
+  }
+
+  // Determine match quality based on score and strategy
+  getMatchQuality(score, strategy) {
+    if (strategy === 'strict' && score >= 80) return 'excellent';
+    if (strategy === 'strict') return 'good';
+    if (strategy === 'relaxed_rating') return 'fair';
+    if (strategy === 'relaxed_availability') return 'basic';
+    if (strategy === 'same_locality') return 'locality_fallback';
+    if (strategy === 'emergency_fallback') return 'emergency_fallback';
+    return 'poor';
+  }
+
+  // Get locality-based fallback fundis
+  async getLocalityFallbackFundis(job, limit = 10) {
+    if (!job.location.county) {
+      throw new Error('Location county is required for locality fallback');
+    }
+
+    const fundis = await Fundi.find({
+      'operatingCounties': job.location.county,
+      'servicesOffered.service': job.serviceCategory
+    })
+    .populate('user', 'firstName lastName profilePhoto county town coordinates')
+    .populate('servicesOffered.service')
+    .limit(limit);
+
+    logger.info(`Found ${fundis.length} locality fallback fundis in ${job.location.county} for service ${job.serviceCategory}`);
+
+    return fundis;
+  }
+
+  // Emergency matching with fallback
   async emergencyMatch(job, options = {}) {
     const {
       maxDistance = 25,
-      minRating = 4.0
+      minRating = 4.0,
+      enableFallback = true
     } = options;
 
-    const potentialFundis = await this.getPotentialFundis(job, {
+    let potentialFundis = await this.getPotentialFundis(job, {
       minRating,
       maxDistance,
-      considerAvailability: true
+      considerAvailability: true,
+      requireVerification: true
     });
+
+    // Emergency fallback
+    if (potentialFundis.length === 0 && enableFallback) {
+      logger.warn(`No fundis found for emergency match, using locality fallback for job: ${job._id}`);
+      
+      potentialFundis = await this.getPotentialFundis(job, {
+        minRating: 3.0,
+        maxDistance: 50,
+        considerAvailability: false,
+        requireVerification: true,
+        sameCountyOnly: true
+      });
+    }
 
     if (potentialFundis.length === 0) {
       return null;
     }
 
-    // For emergency, prioritize proximity and response time
     const emergencyScored = await Promise.all(
       potentialFundis.map(async (fundi) => {
         const proximityScore = await this.calculateLocationScore(fundi, job);
         const responseScore = this.calculateResponseTimeScore(fundi);
         
-        // Emergency weights: 60% proximity, 40% response time
-        const emergencyScore = (proximityScore * 0.6) + (responseScore * 0.4);
+        const emergencyScore = (proximityScore * 0.7) + (responseScore * 0.3);
         
         return { fundi, emergencyScore };
       })
@@ -338,7 +617,11 @@ class MatchingService {
 
     emergencyScored.sort((a, b) => b.emergencyScore - a.emergencyScore);
     
-    return emergencyScored[0]?.fundi || null;
+    return {
+      fundi: emergencyScored[0]?.fundi || null,
+      fallbackUsed: potentialFundis.length > 0 ? 'emergency_fallback' : 'none',
+      totalOptions: potentialFundis.length
+    };
   }
 
   // Bulk matching for corporate clients
@@ -350,7 +633,7 @@ class MatchingService {
         const matches = await this.findBestFundis(job, options);
         results[job._id] = {
           job,
-          matches: matches.slice(0, 3) // Top 3 matches for each job
+          matches: matches.matches?.slice(0, 3) || []
         };
       } catch (error) {
         logger.error(`Error matching job ${job._id}:`, error);
@@ -371,7 +654,7 @@ class MatchingService {
       const fundi = await Fundi.findById(fundiId);
       if (!fundi) return;
 
-      // Update response time (if applicable)
+      // Update response time
       if (jobData.responseTime) {
         const currentAvg = fundi.stats.responseTime || 0;
         const totalJobs = fundi.stats.totalJobs || 0;
@@ -398,6 +681,20 @@ class MatchingService {
       }
 
       await fundi.save();
+      
+      // Clear relevant cache entries (works with Redis or in-memory cache)
+      try {
+        if (cache && typeof cache.keys === 'function' && typeof cache.del === 'function') {
+          const pattern = `matches:*`;
+          const keys = await cache.keys(pattern);
+          if (keys && keys.length > 0) {
+            await cache.del(keys);
+          }
+        }
+      } catch (err) {
+        logger.warn('Cache clear failed in matching service after stats update', err);
+      }
+      
       logger.info(`Updated stats for fundi: ${fundiId}`);
     } catch (error) {
       logger.error(`Error updating fundi stats for ${fundiId}:`, error);

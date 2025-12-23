@@ -1,6 +1,8 @@
 // frontend/src/components/profile/FundiProfessionalForm.jsx
 import { useState } from 'react'
 import { Briefcase, DollarSign, MapPin, Award, Plus, X, Save } from 'lucide-react'
+import countiesMapping, { counties } from '../../lib/countiesTowns'
+import toast from 'react-hot-toast'
 import FormInput from '../forms/FormInput'
 import FormSelect from '../forms/FormSelect'
 import FormTextarea from '../forms/FormTextarea'
@@ -17,6 +19,11 @@ export default function FundiProfessionalForm({ profile, onSave, saving }) {
     availability: profile.availability || 'flexible',
     tools: profile.tools || []
   })
+  // Include operating counties/towns and coordinates
+  // merge any existing values that might be at profile.operatingCounties or profile.user.coordinates
+  if (!formData.operatingCounties) formData.operatingCounties = profile.operatingCounties || []
+  if (!formData.operatingTowns) formData.operatingTowns = profile.operatingTowns || []
+  if (!formData.coordinates) formData.coordinates = profile.coordinates || profile.user?.coordinates || {}
   const [newSkill, setNewSkill] = useState('')
   const [newCertification, setNewCertification] = useState({ name: '', issuer: '', year: '' })
   const [newServiceArea, setNewServiceArea] = useState('')
@@ -106,6 +113,47 @@ export default function FundiProfessionalForm({ profile, onSave, saving }) {
       }))
       setNewTool('')
     }
+  }
+
+  // Operating Counties / Towns management
+  const [newCounty, setNewCounty] = useState('')
+  const [newTown, setNewTown] = useState('')
+  const [townCounty, setTownCounty] = useState((formData.operatingCounties && formData.operatingCounties[0]) || counties[0] || '')
+
+  const addOperatingCounty = () => {
+    if (newCounty && !((formData.operatingCounties || []).includes(newCounty))) {
+      setFormData(prev => ({ ...prev, operatingCounties: [...(prev.operatingCounties || []), newCounty] }))
+      setNewCounty('')
+    }
+  }
+
+  const removeOperatingCounty = (c) => {
+    setFormData(prev => ({ ...prev, operatingCounties: (prev.operatingCounties || []).filter(x => x !== c) }))
+  }
+
+  const addOperatingTown = () => {
+    if (newTown && !((formData.operatingTowns || []).includes(newTown))) {
+      setFormData(prev => ({ ...prev, operatingTowns: [...(prev.operatingTowns || []), newTown] }))
+      setNewTown('')
+    }
+  }
+
+  const removeOperatingTown = (t) => {
+    setFormData(prev => ({ ...prev, operatingTowns: (prev.operatingTowns || []).filter(x => x !== t) }))
+  }
+
+  const pinMyLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation not supported')
+      return
+    }
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const { latitude, longitude } = pos.coords
+      setFormData(prev => ({ ...prev, coordinates: { latitude, longitude } }))
+      toast.success('Location pinned')
+    }, (err) => {
+      toast.error('Failed to get location: ' + err.message)
+    })
   }
 
   const removeTool = (toolToRemove) => {
@@ -254,6 +302,56 @@ export default function FundiProfessionalForm({ profile, onSave, saving }) {
               options={availabilityOptions}
               icon={Briefcase}
             />
+          </div>
+        </div>
+
+        {/* Operating Counties & Towns */}
+        <div className="mb-8">
+          <label className="block text-sm font-medium text-gray-700 mb-3">Operating Counties</label>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {(formData.operatingCounties || []).map((c, i) => (
+              <span key={i} className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-yellow-100 text-yellow-800">
+                {c}
+                <button type="button" onClick={() => removeOperatingCounty(c)} className="ml-2 text-yellow-600 hover:text-yellow-800"><X className="w-3 h-3" /></button>
+              </span>
+            ))}
+          </div>
+            <div className="flex space-x-3 mb-3">
+              <select value={newCounty} onChange={(e) => setNewCounty(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg">
+                <option value="">Select county</option>
+                {counties.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button type="button" onClick={addOperatingCounty} className="bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-600 transition-colors flex items-center space-x-2"><Plus className="w-4 h-4" /><span>Add</span></button>
+            </div>
+
+          <label className="block text-sm font-medium text-gray-700 mb-3">Operating Towns</label>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {(formData.operatingTowns || []).map((t, i) => (
+              <span key={i} className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-yellow-100 text-yellow-800">
+                {t}
+                <button type="button" onClick={() => removeOperatingTown(t)} className="ml-2 text-yellow-600 hover:text-yellow-800"><X className="w-3 h-3" /></button>
+              </span>
+            ))}
+          </div>
+            <div className="flex space-x-3 mb-3">
+              <select value={townCounty} onChange={(e) => { setTownCounty(e.target.value); setNewTown('') }} className="px-3 py-2 border border-gray-300 rounded-lg">
+                <option value="">Select county for town</option>
+                {counties.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+
+              <select value={newTown} onChange={(e) => setNewTown(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg">
+                <option value="">Select town</option>
+                {(countiesMapping[townCounty] || []).map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+
+              <button type="button" onClick={addOperatingTown} className="bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-600 transition-colors flex items-center space-x-2"><Plus className="w-4 h-4" /><span>Add</span></button>
+            </div>
+
+          <label className="block text-sm font-medium text-gray-700 mb-3">Exact Location (coordinates)</label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <input type="text" value={formData.coordinates?.latitude || ''} onChange={(e) => setFormData(prev => ({ ...prev, coordinates: { ...(prev.coordinates||{}), latitude: e.target.value } }))} placeholder="Latitude" className="px-3 py-2 border border-gray-300 rounded-lg" />
+            <input type="text" value={formData.coordinates?.longitude || ''} onChange={(e) => setFormData(prev => ({ ...prev, coordinates: { ...(prev.coordinates||{}), longitude: e.target.value } }))} placeholder="Longitude" className="px-3 py-2 border border-gray-300 rounded-lg" />
+            <button type="button" onClick={pinMyLocation} className="bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-600 transition-colors">Pin my location</button>
           </div>
         </div>
 

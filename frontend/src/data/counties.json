@@ -1,0 +1,67 @@
+{
+  "counties": [
+    {
+      "name": "Nairobi",
+      "towns": [
+        "Westlands",
+        "Karen",
+        "Kilimani",
+        "Langata",
+        "Embakasi",
+        "Kasarani",
+        "Dagoretti",
+        "Kibera",
+        "Eastleigh",
+        "CBD"
+      ]
+    },
+    {
+      "name": "Mombasa",
+      "towns": [
+        "Nyali",
+        "Bamburi",
+        "Kisauni",
+        "Likoni",
+        "Changamwe",
+        "Tudor",
+        "Mvita",
+        "Mtwapa"
+      ]
+    },
+    {
+      "name": "Kisumu",
+      "towns": [
+        "Kondele",
+        "Nyalenda",
+        "Manyatta",
+        "Milimani",
+        "Mamboleo",
+        "Nyamasaria",
+        "CBD"
+      ]
+    },
+    {
+      "name": "Nakuru",
+      "towns": [
+        "London",
+        "Shabab",
+        "Milimani",
+        "Racecourse",
+        "Lanet",
+        "Free Area",
+        "CBD"
+      ]
+    },
+    {
+      "name": "Eldoret",
+      "towns": [
+        "Langas",
+        "Huruma",
+        "Pioneer",
+        "Kapsoya",
+        "Elgon View",
+        "CBD"
+      ]
+    }
+  ]
+}

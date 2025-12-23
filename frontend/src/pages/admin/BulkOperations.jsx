@@ -1,8 +1,9 @@
 // frontend/src/pages/admin/BulkOperations.jsx
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Zap, Users, Mail, Shield, Download, CheckCircle, AlertCircle } from 'lucide-react'
 import { useApi } from '../../hooks/useApi'
-import { bulkAPI } from '../../lib/api'
+import { bulkAPI, adminAPI } from '../../lib/api'
+import { X } from 'lucide-react'
 
 const BulkOperations = () => {
   const [selectedAction, setSelectedAction] = useState('')
@@ -104,7 +105,8 @@ const BulkOperations = () => {
     {
       title: 'Verify All Pending Fundis',
       description: 'Approve all fundis waiting for verification',
-      action: () => bulkVerifyFundis({ action: 'verify_all_pending' }),
+      // open modal to review pending fundis before verification
+      action: () => setShowFundiModal(true),
       icon: Shield,
       color: 'green'
     },
@@ -134,6 +136,67 @@ const BulkOperations = () => {
       color: 'orange'
     }
   ]
+
+  // Modal state & pending fundis
+  const [showFundiModal, setShowFundiModal] = useState(false)
+  const [pendingFundis, setPendingFundis] = useState([])
+  const { execute: fetchPendingVerifications } = useApi(adminAPI.getPendingVerifications, { showToast: false })
+  const { execute: doApproveVerification } = useApi(adminAPI.approveVerification, { showToast: true, successMessage: 'Verification approved' })
+  const { execute: doRejectVerification } = useApi(adminAPI.rejectVerification, { showToast: true, successMessage: 'Verification rejected' })
+
+  useEffect(() => {
+    if (!showFundiModal) return
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetchPendingVerifications()
+        if (cancelled) return
+        // API returns { success, data: { verifications, pagination } }
+        const verifications = res?.data?.data?.verifications || res?.data?.verifications || res?.verifications || []
+        const items = verifications.map(v => ({ verification: v, applicant: v.applicant }))
+        setPendingFundis(items)
+      } catch (err) {
+        console.error('Failed to load pending verifications', err)
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [showFundiModal, fetchPendingVerifications])
+
+  // Handlers for modal actions
+  const handleVerifyItem = async (item) => {
+    try {
+      // Approve the verification (use verification id)
+      await doApproveVerification(item.verification._id, { notes: 'Verified by admin' })
+      // remove item from list
+      setPendingFundis(prev => prev.filter(p => p.verification._id !== item.verification._id))
+    } catch (err) {
+      console.error('Verify failed', err)
+    }
+  }
+
+  const handleRejectItem = async (item) => {
+    const reason = window.prompt('Enter rejection reason')
+    if (!reason) return
+    try {
+      await doRejectVerification(item.verification._id, { reason })
+      setPendingFundis(prev => prev.filter(p => p.verification._id !== item.verification._id))
+    } catch (err) {
+      console.error('Reject failed', err)
+    }
+  }
+
+  const handleVerifyAll = async () => {
+    try {
+      // Use bulk endpoint to verify all pending fundis
+      await bulkVerifyFundis({ action: 'verify_all_pending' })
+      setPendingFundis([])
+      setShowFundiModal(false)
+    } catch (err) {
+      console.error('Verify all failed', err)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -384,7 +447,7 @@ const BulkOperations = () => {
         </div>
       </div>
 
-      {/* Warning Banner */}
+  {/* Warning Banner */}
       {loading && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-center space-x-3">
@@ -398,8 +461,104 @@ const BulkOperations = () => {
           </div>
         </div>
       )}
+      {/* Fundi review modal */}
+      <FundiReviewModal
+        open={showFundiModal}
+        onClose={() => setShowFundiModal(false)}
+        pendingFundis={pendingFundis}
+        onVerify={handleVerifyItem}
+        onReject={handleRejectItem}
+        onVerifyAll={handleVerifyAll}
+      />
     </div>
   )
 }
 
 export default BulkOperations
+
+// Modal component appended below via same file for simplicity
+function FundiReviewModal({ open, onClose, pendingFundis, onVerify, onReject, onVerifyAll }) {
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
+      <div className="absolute inset-0 bg-black opacity-40" onClick={onClose} />
+      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 relative z-10">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="text-lg font-semibold">Pending Fundi Verifications</h3>
+          <button onClick={onClose} className="p-2 rounded hover:bg-gray-100"><X size={18} /></button>
+        </div>
+
+        <div className="p-4 max-h-96 overflow-y-auto space-y-4">
+          {pendingFundis.length === 0 && (
+            <div className="text-sm text-gray-600">No pending verifications found.</div>
+          )}
+
+          {pendingFundis.map((item, idx) => {
+            const v = item.verification
+            const applicant = item.applicant || {}
+            const documents = v?.documents || {}
+            return (
+              <div key={v._id || idx} className="border rounded p-3 flex items-start space-x-4">
+                <div className="flex-shrink-0 w-12 h-12 bg-gray-50 rounded flex items-center justify-center">
+                  <div className="text-sm font-medium text-gray-700">{applicant.firstName?.[0] || applicant.email?.[0] || 'U'}</div>
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">{applicant.firstName} {applicant.lastName}</div>
+                      <div className="text-xs text-gray-500">{applicant.email} • {new Date(v.createdAt).toLocaleString()}</div>
+                    </div>
+                    <div className="space-x-2">
+                      <button
+                        onClick={() => onVerify(item)}
+                        className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 text-sm"
+                      >
+                        Verify
+                      </button>
+                      <button
+                        onClick={() => onReject(item)}
+                        className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 text-sm text-gray-700">
+                    <div className="font-medium mb-1">Documents</div>
+                    <div className="flex space-x-2 flex-wrap">
+                      {Object.keys(documents).length === 0 && (
+                        <div className="text-xs text-gray-500">No documents attached</div>
+                      )}
+                      {Object.entries(documents).map(([k, doc]) => {
+                        if (!doc) return null
+                        // doc can be an object with url or an array of objects
+                        if (Array.isArray(doc)) {
+                          return doc.map((d, i) => (
+                            d && d.url ? (
+                              <a key={`${k}-${i}`} href={d.url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline mr-2">{`${k} ${i+1}`}</a>
+                            ) : null
+                          ))
+                        }
+                        // single doc object
+                        const url = doc.url || (typeof doc === 'string' ? doc : null)
+                        if (url) return <a key={k} href={url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline mr-2">{k}</a>
+                        return null
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="flex items-center justify-end p-4 border-t space-x-2">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-100 rounded">Close</button>
+          <button onClick={onVerifyAll} className="px-4 py-2 bg-green-600 text-white rounded">Verify All</button>
+        </div>
+      </div>
+    </div>
+  )
+}

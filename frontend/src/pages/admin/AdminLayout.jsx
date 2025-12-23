@@ -28,6 +28,7 @@ const AdminLayout = () => {
     { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
     { name: 'Analytics', href: '/admin/analytics', icon: TrendingUp },
     { name: 'Bookings', href: '/admin/bookings', icon: Calendar },
+    { name: 'Bulk Operation', href: '/admin/bulk-operations', icon: Zap },
     { name: 'Shops', href: '/admin/shop-verification', icon: ShoppingCart },
     { name: 'Users', href: '/admin/fundi-allocation', icon: Users },
     { name: 'Chat', href: '/admin/chat', icon: MessageSquare },

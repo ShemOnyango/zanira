@@ -27,12 +27,22 @@ export const bookingAPI = {
   rate: (id, rating) => axios.post(`/bookings/${id}/rate`, rating),
   confirmCompletion: (id) => axios.patch(`/bookings/${id}/confirm-completion`),
   initiatePayment: (id, paymentData) => axios.post(`/bookings/${id}/payment`, paymentData),
-  assignFundi: (id, fundiId) => axios.post(`/bookings/${id}/assign-fundi`, { fundiId }),
-  negotiatePrice: (id, priceData) => axios.post(`/bookings/${id}/negotiate-price`, priceData),
   assignFundi: (id, fundiData) => axios.post(`/bookings/${id}/assign-fundi`, fundiData),
+  negotiatePrice: (id, priceData) => axios.post(`/bookings/${id}/negotiate-price`, priceData),
   getMatchingFundis: (id) => axios.get(`/bookings/${id}/matching-fundis`),
-  // Push booking to all matching fundis (admin action)
+  getLocalityFallback: (data) => axios.post('/matching/locality-fallback', data),
   pushToFundis: (id) => axios.post(`/bookings/${id}/push-to-fundis`),
+  getClientBookings: (params) => axios.get('/bookings/client/my-bookings', { params }),
+  getFundiBookings: (params) => axios.get('/bookings/fundi/my-bookings', { params }),
+  requestReschedule: (id, data) => axios.post(`/bookings/${id}/reschedule`, data),
+  approveReschedule: (id) => axios.patch(`/bookings/${id}/reschedule/approve`),
+  rejectReschedule: (id, reason) => axios.patch(`/bookings/${id}/reschedule/reject`, { reason }),
+  addNote: (id, note) => axios.post(`/bookings/${id}/notes`, { note }),
+  getNotes: (id) => axios.get(`/bookings/${id}/notes`),
+  uploadReceipt: (id, formData) => axios.post(`/bookings/${id}/receipts`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  getReceipts: (id) => axios.get(`/bookings/${id}/receipts`),
 }
 
 // Wallet API - VERIFIED CORRECT
@@ -52,9 +62,7 @@ export const walletAPI = {
 export const userAPI = {
   getProfile: () => axios.get('/users/profile'),
   updateProfile: (data) => axios.patch('/users/profile', data),
-  uploadPhoto: (formData) => axios.post('/users/profile/photo', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }),
+  uploadPhoto: (formData) => axios.post('/users/profile/photo', formData, { headers: { 'Content-Type': 'multipart/form-data' },}),
   uploadDocument: (formData) => axios.post('/files/upload-verification', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }),
@@ -101,6 +109,13 @@ export const notificationAPI = {
   markAllAsRead: () => axios.patch('/notifications/read-all'),
   delete: (id) => axios.delete(`/notifications/${id}`),
   updatePreferences: (data) => axios.patch('/notifications/preferences', data),
+  getSettings: () => axios.get('/notifications/settings'),
+  updateSettings: (data) => axios.patch('/notifications/settings', data),
+  create: (data) => axios.post('/notifications', data),
+  sendToAll: (data) => axios.post('/notifications/broadcast', data),
+  getTemplates: () => axios.get('/notifications/templates'),
+  createTemplate: (data) => axios.post('/notifications/templates', data),
+  updateTemplate: (id, data) => axios.patch(`/notifications/templates/${id}`, data),
 }
 
 // Subscription API - VERIFIED CORRECT
@@ -143,8 +158,8 @@ export const adminAPI = {
   getStats: () => axios.get('/admin/statistics'),
   getDashboard: () => axios.get('/admin/dashboard'),
   getPendingVerifications: () => axios.get('/admin/verifications/pending'),
-  approveVerification: (id, data) => axios.post(`/admin/verifications/${id}/approve`, data),
-  rejectVerification: (id, reason) => axios.post(`/admin/verifications/${id}/reject`, { reason }),
+  approveVerification: (id, data) => axios.patch(`/admin/verifications/${id}/approve`, data),
+  rejectVerification: (id, reason) => axios.patch(`/admin/verifications/${id}/reject`, { reason }),
   getDisputes: (params) => axios.get('/admin/disputes', { params }),
   resolveDispute: (id, resolution) => axios.post(`/admin/disputes/${id}/resolve`, resolution),
   getRecentActivities: (params) => axios.get('/admin/activities', { params }),
@@ -160,6 +175,19 @@ export const adminAPI = {
   updateUserRole: (id, roleData) => axios.patch(`/admin/users/${id}/role`, roleData),
   getSystemConfig: () => axios.get('/admin/system/config'),
   updateSystemConfig: (data) => axios.patch('/admin/system/config', data),
+  getFundiVerification: (id) => axios.get(`/admin/fundis/${id}/verification`),
+  verifyFundi: (id, data) => axios.post(`/admin/fundis/${id}/verify`, data),
+  rejectFundi: (id, data) => axios.post(`/admin/fundis/${id}/reject`, data),
+  suspendUser: (id, reason) => axios.patch(`/admin/users/${id}/suspend`, { reason }),
+  unsuspendUser: (id) => axios.patch(`/admin/users/${id}/unsuspend`),
+  getSuspendedUsers: () => axios.get('/admin/users/suspended'),
+  getPlatformMetrics: () => axios.get('/admin/platform-metrics'),
+  updateCommission: (data) => axios.patch('/admin/commission', data),
+  getCommissionHistory: () => axios.get('/admin/commission/history'),
+  runMaintenance: (task) => axios.post('/admin/maintenance', { task }),
+  backupDatabase: () => axios.post('/admin/backup'),
+  getBackups: () => axios.get('/admin/backups'),
+  restoreBackup: (backupId) => axios.post(`/admin/backups/${backupId}/restore`),
 }
 
 // Analytics API - CORRECTED ROUTES
@@ -172,6 +200,12 @@ export const analyticsAPI = {
   getBookingTrends: (params) => axios.get('/analytics/booking-trends', { params }),
   getFundiPerformance: (params) => axios.get('/analytics/fundi-performance', { params }),
   getPlatformMetrics: () => axios.get('/analytics/platform-metrics'),
+  getServicePerformance: (params) => axios.get('/analytics/service-performance', { params }),
+  getLocationAnalytics: (params) => axios.get('/analytics/location', { params }),
+  getCancellationAnalytics: (params) => axios.get('/analytics/cancellations', { params }),
+  getCustomerSatisfaction: (params) => axios.get('/analytics/customer-satisfaction', { params }),
+  getRetentionRates: (params) => axios.get('/analytics/retention', { params }),
+  getConversionRates: (params) => axios.get('/analytics/conversion', { params }),
 }
 
 // Advanced Analytics API - used by admin enhanced analytics page
@@ -219,6 +253,11 @@ export const apiKeyAPI = {
 // Matching API - VERIFIED CORRECT
 export const matchingAPI = {
   findFundis: (data) => axios.post('/matching/find-fundis', data),
+  emergencyMatch: (data) => axios.post('/matching/emergency-match', data),
+  getLocalityFallback: (data) => axios.post('/matching/locality-fallback', data),
+  updatePreferences: (data) => axios.patch('/matching/preferences', data),
+  getStats: () => axios.get('/matching/stats'),
+  adminForceMatch: (data) => axios.post('/matching/admin/force-match', data),
   getRecommendations: (serviceId) => axios.get(`/matching/recommendations/${serviceId}`),
 }
 
@@ -255,6 +294,11 @@ export const locationAPI = {
   getSession: (bookingId) => axios.get(`/location/session/${bookingId}`),
   getHistory: (sessionId) => axios.get(`/location/history/${sessionId}`),
   updateSettings: (sessionId, data) => axios.patch(`/location/settings/${sessionId}`, data),
+  getCounties: () => axios.get('/location/counties'),
+  getTowns: (county) => axios.get(`/location/towns?county=${county}`),
+  searchLocations: (query) => axios.get(`/location/search?q=${query}`),
+  getCoordinates: (address) => axios.get(`/location/geocode?address=${encodeURIComponent(address)}`),
+  getDistance: (origin, destination) => axios.get(`/location/distance?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}`),
 }
 
 // Payment API - VERIFIED CORRECT
@@ -301,4 +345,134 @@ export const productAPI = {
   create: (data) => axios.post('/products', data),
   update: (id, data) => axios.patch(`/products/${id}`, data),
   remove: (id) => axios.delete(`/products/${id}`)
+}
+
+// Fundi API - ADD NEW ENDPOINTS
+export const fundiAPI = {
+  getAll: (params) => axios.get('/fundis', { params }),
+  getById: (id) => axios.get(`/fundis/${id}`),
+  getProfile: () => axios.get('/fundis/profile'),
+  updateProfile: (data) => axios.patch('/fundis/profile', data),
+  updateAvailability: (data) => axios.patch('/fundis/availability', data),
+  getServices: () => axios.get('/fundis/services'),
+  addService: (data) => axios.post('/fundis/services', data),
+  updateService: (serviceId, data) => axios.patch(`/fundis/services/${serviceId}`, data),
+  removeService: (serviceId) => axios.delete(`/fundis/services/${serviceId}`),
+  getPortfolio: () => axios.get('/fundis/portfolio'),
+  addPortfolioItem: (formData) => axios.post('/fundis/portfolio', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  updatePortfolioItem: (itemId, data) => axios.patch(`/fundis/portfolio/${itemId}`, data),
+  deletePortfolioItem: (itemId) => axios.delete(`/fundis/portfolio/${itemId}`),
+  getReviews: (params) => axios.get('/fundis/reviews', { params }),
+  getEarnings: (params) => axios.get('/fundis/earnings', { params }),
+  getPerformance: () => axios.get('/fundis/performance'),
+  getVerificationStatus: () => axios.get('/fundis/verification-status'),
+  submitVerification: (formData) => axios.post('/fundis/verification', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  getMatchingJobs: (params) => axios.get('/fundis/matching-jobs', { params }),
+  acceptJob: (bookingId) => axios.post(`/fundis/jobs/${bookingId}/accept`),
+  declineJob: (bookingId, reason) => axios.post(`/fundis/jobs/${bookingId}/decline`, { reason }),
+  startJob: (bookingId) => axios.post(`/fundis/jobs/${bookingId}/start`),
+  completeJob: (bookingId) => axios.post(`/fundis/jobs/${bookingId}/complete`),
+  updateLocation: (data) => axios.patch('/fundis/location', data),
+}
+
+// Client API - ADD NEW ENDPOINTS
+export const clientAPI = {
+  getProfile: () => axios.get('/clients/profile'),
+  updateProfile: (data) => axios.patch('/clients/profile', data),
+  getFavoriteFundis: () => axios.get('/clients/favorite-fundis'),
+  addFavoriteFundi: (fundiId) => axios.post('/clients/favorite-fundis', { fundiId }),
+  removeFavoriteFundi: (fundiId) => axios.delete(`/clients/favorite-fundis/${fundiId}`),
+  getBookingHistory: (params) => axios.get('/clients/booking-history', { params }),
+  getSavedAddresses: () => axios.get('/clients/addresses'),
+  addAddress: (data) => axios.post('/clients/addresses', data),
+  updateAddress: (addressId, data) => axios.patch(`/clients/addresses/${addressId}`, data),
+  deleteAddress: (addressId) => axios.delete(`/clients/addresses/${addressId}`),
+  setPrimaryAddress: (addressId) => axios.patch(`/clients/addresses/${addressId}/primary`),
+}
+
+// Service Category API
+export const serviceCategoryAPI = {
+  getAll: (params) => axios.get('/service-categories', { params }),
+  getById: (id) => axios.get(`/service-categories/${id}`),
+  create: (data) => axios.post('/service-categories', data),
+  update: (id, data) => axios.patch(`/service-categories/${id}`, data),
+  delete: (id) => axios.delete(`/service-categories/${id}`),
+  getPopular: () => axios.get('/service-categories/popular'),
+  search: (query) => axios.get(`/service-categories/search?q=${query}`),
+  getWithFundis: (params) => axios.get('/service-categories/with-fundis', { params }),
+}
+
+// File Upload API
+export const fileAPI = {
+  upload: (formData) => axios.post('/files/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  uploadMultiple: (formData) => axios.post('/files/upload-multiple', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  uploadVerification: (formData) => axios.post('/files/upload-verification', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  delete: (fileId) => axios.delete(`/files/${fileId}`),
+  getMyFiles: (params) => axios.get('/files/my-files', { params }),
+}
+
+// Rating & Review API
+export const ratingAPI = {
+  create: (data) => axios.post('/ratings', data),
+  update: (ratingId, data) => axios.patch(`/ratings/${ratingId}`, data),
+  delete: (ratingId) => axios.delete(`/ratings/${ratingId}`),
+  getMyRatings: (params) => axios.get('/ratings/my-ratings', { params }),
+  getFundiRatings: (fundiId, params) => axios.get(`/ratings/fundi/${fundiId}`, { params }),
+  getClientRatings: (clientId, params) => axios.get(`/ratings/client/${clientId}`, { params }),
+  getPending: () => axios.get('/ratings/pending'),
+  respondToReview: (ratingId, response) => axios.patch(`/ratings/${ratingId}/respond`, { response }),
+}
+
+// Settings API
+export const settingsAPI = {
+  getAppSettings: () => axios.get('/settings/app'),
+  updateAppSettings: (data) => axios.patch('/settings/app', data),
+  getNotificationSettings: () => axios.get('/settings/notifications'),
+  updateNotificationSettings: (data) => axios.patch('/settings/notifications', data),
+  getPrivacySettings: () => axios.get('/settings/privacy'),
+  updatePrivacySettings: (data) => axios.patch('/settings/privacy', data),
+  getSecuritySettings: () => axios.get('/settings/security'),
+  updateSecuritySettings: (data) => axios.patch('/settings/security', data),
+  changePassword: (data) => axios.patch('/settings/password', data),
+  enableTwoFactor: () => axios.post('/settings/two-factor/enable'),
+  disableTwoFactor: () => axios.post('/settings/two-factor/disable'),
+  verifyTwoFactor: (token) => axios.post('/settings/two-factor/verify', { token }),
+}
+
+// Emergency & Support API
+export const supportAPI = {
+  createTicket: (data) => axios.post('/support/tickets', data),
+  getTickets: (params) => axios.get('/support/tickets', { params }),
+  getTicket: (id) => axios.get(`/support/tickets/${id}`),
+  updateTicket: (id, data) => axios.patch(`/support/tickets/${id}`, data),
+  addMessage: (id, data) => axios.post(`/support/tickets/${id}/messages`, data),
+  getMessages: (id) => axios.get(`/support/tickets/${id}/messages`),
+  closeTicket: (id) => axios.patch(`/support/tickets/${id}/close`),
+  reopenTicket: (id) => axios.patch(`/support/tickets/${id}/reopen`),
+  getCategories: () => axios.get('/support/categories'),
+  getFaqs: (params) => axios.get('/support/faqs', { params }),
+  contactSupport: (data) => axios.post('/support/contact', data),
+}
+
+// Commission & Payout API
+export const commissionAPI = {
+  getSettings: () => axios.get('/commission/settings'),
+  updateSettings: (data) => axios.patch('/commission/settings', data),
+  calculate: (data) => axios.post('/commission/calculate', data),
+  getFundiCommissions: (params) => axios.get('/commission/fundi', { params }),
+  getPlatformCommissions: (params) => axios.get('/commission/platform', { params }),
+  requestPayout: (data) => axios.post('/commission/payouts/request', data),
+  getPayouts: (params) => axios.get('/commission/payouts', { params }),
+  processPayout: (id) => axios.post(`/commission/payouts/${id}/process`),
+  cancelPayout: (id) => axios.post(`/commission/payouts/${id}/cancel`),
 }

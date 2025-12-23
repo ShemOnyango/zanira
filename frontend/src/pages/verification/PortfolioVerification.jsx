@@ -70,12 +70,40 @@ export default function PortfolioVerification({ profile, onSave, saving }) {
   const handleFileUpload = async (file, fieldName) => {
     setUploading(fieldName)
     try {
-      const formData = new FormData()
-      formData.append('document', file)
-      formData.append('field', fieldName)
+      // Map our local UI field names to the server's expected multipart field names
+      const mapToServerField = (local) => {
+        const map = {
+          verificationVideo: 'video',
+          toolsPhoto: 'photoWithTools',
+          nationalIdPhoto: 'nationalIdFront',
+          nationalIdScan: 'nationalIdBack',
+          licenseDocument: 'otherCertificates',
+          ncaCertificate: 'ncaCertificate',
+          idVerificationDocument: 'clientIdDocument',
+          businessPermit: 'businessPermit',
+          businessRegistration: 'businessRegistration'
+        }
+        return map[local] || local
+      }
 
-      const response = await uploadFile(formData)
-      const fileUrl = response?.data?.url || response?.url
+      const serverField = mapToServerField(fieldName)
+
+      const formDataToSend = new FormData()
+      // Append the file under the server-expected field name
+      // For array fields like otherCertificates, multer will accept multiple files under the same field name
+      formDataToSend.append(serverField, file)
+
+      // Optionally include a documentType for server-side labeling
+      formDataToSend.append('documentType', fieldName)
+
+      const response = await uploadFile(formDataToSend)
+
+      // Backend returns uploadedFiles in response.data.data.uploadedFiles
+      const uploadedFiles = response?.data?.data?.uploadedFiles || response?.data?.uploadedFiles || response?.uploadedFiles || {}
+
+      // uploadedFiles keys are the multipart field names (serverField)
+      // If server returned a single string url (legacy), try to use that too
+      const fileUrl = uploadedFiles[serverField] || response?.data?.data?.url || response?.data?.url || response?.url
 
       if (fileUrl) {
         setFormData(prev => ({
@@ -83,6 +111,13 @@ export default function PortfolioVerification({ profile, onSave, saving }) {
           [fieldName]: fileUrl
         }))
         toast.success(`${fieldName.replace(/([A-Z])/g, ' $1')} uploaded successfully`)
+      } else {
+        // If uploadedFiles contains the url under a different key (like nationalIdFront when we mapped nationalIdScan), try to find any url
+        const anyUrl = Object.values(uploadedFiles).find(v => typeof v === 'string' && v.startsWith('http'))
+        if (anyUrl) {
+          setFormData(prev => ({ ...prev, [fieldName]: anyUrl }))
+          toast.success(`${fieldName.replace(/([A-Z])/g, ' $1')} uploaded successfully`)
+        }
       }
     } catch (error) {
       console.error(`Upload failed for ${fieldName}:`, error)
